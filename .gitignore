@@ -18,3 +18,10 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Firebase/Google Service Account Keys (NEVER COMMIT)
+*-firebase-adminsdk-*.json
+*-service-account*.json
+serviceAccount*.json
+firebase-*.json
+credentials*.json
