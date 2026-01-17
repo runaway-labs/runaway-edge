@@ -375,8 +375,8 @@ async function handleActivityCreate(supabase: any, activityId: number, athleteId
 
   console.log(`Activity ${activityId} saved successfully`)
 
-  // Send push notification
-  await sendActivityNotification(supabase, athleteId, activityData)
+  // Note: Push notification is handled by notify-activity-insert database webhook
+  // to avoid duplicate notifications and centralize notification logic
 
   return 'EVENT_RECEIVED'
 }

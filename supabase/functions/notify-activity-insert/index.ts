@@ -71,10 +71,22 @@ serve(async (req) => {
   }
 
   try {
-    const { record } = await req.json()
+    const payload = await req.json()
+    console.log('📥 Webhook payload received:', JSON.stringify(payload, null, 2))
 
-    console.log('New activity inserted:', record.id)
-    console.log('Athlete ID:', record.athlete_id)
+    const { record } = payload
+
+    if (!record) {
+      console.error('❌ No record in payload')
+      return new Response(JSON.stringify({ error: 'No record in payload' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
+    console.log('🏃 New activity inserted:', record.id)
+    console.log('👤 Athlete ID:', record.athlete_id)
+    console.log('📋 Activity details:', { name: record.name, type: record.type, distance: record.distance })
 
     // Create Supabase client
     const supabaseAdmin = createClient(
@@ -89,15 +101,24 @@ serve(async (req) => {
       .eq('id', record.athlete_id)
       .single()
 
-    if (athleteError || !athlete?.fcm_token) {
-      console.log('No FCM token found for athlete:', record.athlete_id)
-      return new Response(JSON.stringify({ message: 'No FCM token' }), {
+    if (athleteError) {
+      console.error('❌ Error fetching athlete:', athleteError)
+      return new Response(JSON.stringify({ error: 'Failed to fetch athlete', details: athleteError }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
+    if (!athlete?.fcm_token) {
+      console.log('⚠️ No FCM token found for athlete:', record.athlete_id)
+      return new Response(JSON.stringify({ message: 'No FCM token for athlete' }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
-    console.log('Sending silent push notification...')
+    console.log('✅ FCM token found:', athlete.fcm_token.substring(0, 20) + '...')
+    console.log('📤 Sending push notification...')
 
     // Get OAuth access token
     const accessToken = await getAccessToken()
@@ -105,6 +126,13 @@ serve(async (req) => {
     // Get Firebase project ID from service account
     const serviceAccount = JSON.parse(Deno.env.get('FIREBASE_SERVICE_ACCOUNT') ?? '{}')
     const projectId = serviceAccount.project_id
+
+    // Build notification content based on activity
+    const activityName = record.name || record.type || 'Activity'
+    const distance = record.distance ? (record.distance * 0.000621371).toFixed(2) : null
+    const notificationBody = distance
+      ? `${activityName} - ${distance} miles synced!`
+      : `${activityName} synced!`
 
     // Send FCM notification using v1 API
     const fcmResponse = await fetch(
@@ -118,17 +146,25 @@ serve(async (req) => {
         body: JSON.stringify({
           message: {
             token: athlete.fcm_token,
+            // Visible notification
+            notification: {
+              title: '🏃 Activity Synced',
+              body: notificationBody,
+            },
+            // Data payload for app handling
             data: {
               sync_type: 'new_activity',
               activity_id: record.id.toString(),
             },
             apns: {
               headers: {
-                'apns-priority': '5',  // Low priority for background
+                'apns-priority': '10',  // High priority for visible notification
               },
               payload: {
                 aps: {
-                  'content-available': 1,  // Silent notification
+                  'content-available': 1,  // Also trigger background sync
+                  sound: 'default',
+                  badge: 1,
                 }
               }
             }
@@ -138,19 +174,26 @@ serve(async (req) => {
     )
 
     const fcmResult = await fcmResponse.json()
-    console.log('FCM response:', fcmResult)
+
+    if (fcmResponse.ok) {
+      console.log('✅ FCM notification sent successfully:', fcmResult)
+    } else {
+      console.error('❌ FCM error:', fcmResponse.status, fcmResult)
+    }
 
     return new Response(JSON.stringify({
-      success: true,
-      fcm_result: fcmResult
+      success: fcmResponse.ok,
+      fcm_status: fcmResponse.status,
+      fcm_result: fcmResult,
+      notification_body: notificationBody,
     }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
 
   } catch (error) {
-    console.error('Error:', error)
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error('❌ Error:', error)
+    return new Response(JSON.stringify({ error: error.message, stack: error.stack }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })

@@ -30,7 +30,7 @@ const ALL_TOPICS: ResearchTopic[] = [
   },
   {
     title: 'iOS Architecture & Performance',
-    prompt: `iOS best practices 2025: SwiftUI optimization, background location, SwiftData, WidgetKit, App Intents, Live Activities, memory/battery optimization. Provide 5 specific Swift patterns with code examples.`
+    prompt: `iOS best practices 2025: SwiftUI optimization, background location, SwiftData, WidgetKit, App Intents, Live Activities, memory/battery optimization. Provide 5 specific architectural patterns and implementation strategies.`
   },
   {
     title: 'Health & Wellness Integration',
@@ -241,10 +241,12 @@ async function generateResearchBrief(): Promise<string> {
 ${APP_CONTEXT}
 
 Provide detailed, actionable research with:
-- Specific technical recommendations
-- Code snippets or pseudocode where helpful
+- Specific technical recommendations (concepts and approaches, NOT code)
 - Priority rankings (High/Medium/Low)
 - Implementation effort estimates
+- Links to relevant documentation or resources when applicable
+
+Do NOT include code snippets, pseudocode, or code examples. Focus on strategic insights and actionable recommendations.
 
 Be thorough but focused. This is for a solo developer, so prioritize high-impact, achievable improvements.`
 

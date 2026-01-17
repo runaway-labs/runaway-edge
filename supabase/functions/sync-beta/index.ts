@@ -1,10 +1,12 @@
 // Supabase Edge Function: sync-beta
-// Fetches recent activities from Strava and stores them in the database
+// Fetches activities from Strava and stores them in the database
+// Supports pagination for full sync and date range filtering
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 
 const STRAVA_API_BASE = 'https://www.strava.com/api/v3'
+const STRAVA_PAGE_SIZE = 100 // Max allowed by Strava API
 
 interface StravaActivity {
   id: number
@@ -47,7 +49,14 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { user_id, max_activities = 100 } = await req.json()
+    const body = await req.json()
+    const {
+      user_id,
+      max_activities = 100,
+      sync_all = false,        // If true, paginate through ALL activities
+      after,                   // Unix timestamp - only activities after this time
+      before                   // Unix timestamp - only activities before this time
+    } = body
 
     if (!user_id) {
       return new Response(
@@ -56,7 +65,7 @@ Deno.serve(async (req) => {
       )
     }
 
-    console.log('Starting sync-beta for user:', user_id)
+    console.log('Starting sync for user:', user_id, { max_activities, sync_all, after, before })
 
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -101,9 +110,30 @@ Deno.serve(async (req) => {
       accessToken = refreshed
     }
 
+    // Fetch activity types from database for mapping
+    const { data: activityTypes, error: typesError } = await supabaseAdmin
+      .from('activity_types')
+      .select('id, name')
+
+    if (typesError) {
+      console.error('Error fetching activity types:', typesError)
+    }
+
+    // Build activity type lookup map (Strava type name -> database id)
+    const activityTypeMap: Record<string, number> = {}
+    if (activityTypes) {
+      for (const at of activityTypes) {
+        // Map by exact name and lowercase
+        activityTypeMap[at.name] = at.id
+        activityTypeMap[at.name.toLowerCase()] = at.id
+      }
+    }
+    console.log('Activity type map:', activityTypeMap)
+
     // Fetch activities from Strava
-    console.log(`Fetching up to ${max_activities} activities from Strava...`)
-    const activities = await fetchStravaActivities(accessToken, max_activities)
+    const effectiveLimit = sync_all ? Infinity : max_activities
+    console.log(`Fetching ${sync_all ? 'all' : `up to ${max_activities}`} activities from Strava...`)
+    const activities = await fetchStravaActivities(accessToken, effectiveLimit, after, before)
     console.log(`Fetched ${activities.length} activities from Strava`)
 
     if (activities.length === 0) {
@@ -123,21 +153,44 @@ Deno.serve(async (req) => {
 
     for (const activity of activities) {
       try {
-        const activityRecord = mapStravaActivity(activity, user_id)
+        const activityRecord = mapStravaActivity(activity, user_id, activityTypeMap)
 
-        const { error: upsertError } = await supabaseAdmin
+        console.log(`Upserting activity ${activity.id}: ${activity.name}`)
+        console.log(`  - athlete_id: ${activityRecord.athlete_id}`)
+        console.log(`  - distance: ${activityRecord.distance}`)
+        console.log(`  - activity_date: ${activityRecord.activity_date}`)
+
+        const { data: upsertData, error: upsertError, status, statusText } = await supabaseAdmin
           .from('activities')
           .upsert(activityRecord, {
-            onConflict: 'strava_id',
+            onConflict: 'id',
             ignoreDuplicates: false
           })
+          .select('id, name')
+
+        console.log(`  - Response status: ${status} ${statusText}`)
 
         if (upsertError) {
-          console.error(`Error upserting activity ${activity.id}:`, upsertError)
+          console.error(`  - ERROR upserting activity ${activity.id}:`, JSON.stringify(upsertError))
           errorCount++
         } else {
+          console.log(`  - SUCCESS: upserted data:`, JSON.stringify(upsertData))
           syncedCount++
         }
+
+        // Verify the record exists
+        const { data: verifyData, error: verifyError } = await supabaseAdmin
+          .from('activities')
+          .select('id, name')
+          .eq('id', activity.id)
+          .single()
+
+        if (verifyError) {
+          console.log(`  - VERIFY FAILED: Activity ${activity.id} NOT in database:`, JSON.stringify(verifyError))
+        } else {
+          console.log(`  - VERIFY OK: Activity ${activity.id} exists in database:`, JSON.stringify(verifyData))
+        }
+
       } catch (err) {
         console.error(`Error processing activity ${activity.id}:`, err)
         errorCount++
@@ -206,47 +259,96 @@ async function refreshStravaToken(
   }
 }
 
-async function fetchStravaActivities(accessToken: string, limit: number): Promise<StravaActivity[]> {
-  const response = await fetch(
-    `${STRAVA_API_BASE}/athlete/activities?per_page=${limit}`,
-    {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    }
-  )
+async function fetchStravaActivities(
+  accessToken: string,
+  limit: number,
+  after?: number,
+  before?: number
+): Promise<StravaActivity[]> {
+  const allActivities: StravaActivity[] = []
+  let page = 1
+  let hasMore = true
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error('Strava API error:', response.status, errorText)
-    throw new Error(`Strava API error: ${response.status}`)
+  while (hasMore && allActivities.length < limit) {
+    // Build query params
+    const params = new URLSearchParams({
+      per_page: String(Math.min(STRAVA_PAGE_SIZE, limit - allActivities.length)),
+      page: String(page)
+    })
+
+    // Add date filters if provided
+    if (after) params.append('after', String(after))
+    if (before) params.append('before', String(before))
+
+    const url = `${STRAVA_API_BASE}/athlete/activities?${params.toString()}`
+    console.log(`Fetching page ${page}...`)
+
+    const response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('Strava API error:', response.status, errorText)
+      throw new Error(`Strava API error: ${response.status}`)
+    }
+
+    const pageActivities: StravaActivity[] = await response.json()
+    allActivities.push(...pageActivities)
+
+    // Check if we should continue paginating
+    if (pageActivities.length < STRAVA_PAGE_SIZE) {
+      hasMore = false // No more activities
+    } else {
+      page++
+    }
+
+    // Safety limit to prevent infinite loops
+    if (page > 100) {
+      console.warn('Reached maximum page limit (100)')
+      break
+    }
   }
 
-  return await response.json()
+  return allActivities
 }
 
-function mapStravaActivity(activity: StravaActivity, athleteId: number): any {
+function mapStravaActivity(activity: StravaActivity, athleteId: number, activityTypeMap: Record<string, number>): any {
+  // Look up activity_type_id from our map
+  // Try: sport_type, then type, then lowercase versions
+  const activityTypeId =
+    activityTypeMap[activity.sport_type] ||
+    activityTypeMap[activity.type] ||
+    activityTypeMap[activity.sport_type?.toLowerCase()] ||
+    activityTypeMap[activity.type?.toLowerCase()] ||
+    activityTypeMap['Run'] ||  // Default to Run if nothing matches
+    1  // Fallback to 1
+
+  console.log(`  - Mapping type: sport_type="${activity.sport_type}", type="${activity.type}" -> activity_type_id=${activityTypeId}`)
+
   return {
-    strava_id: activity.id,
+    id: activity.id,  // Using Strava ID as primary key
     athlete_id: athleteId,
+    activity_type_id: activityTypeId,
     name: activity.name,
-    type: activity.type,
-    sport_type: activity.sport_type,
-    start_date: activity.start_date,
-    start_date_local: activity.start_date_local,
-    timezone: activity.timezone,
+    activity_date: activity.start_date,
+    start_time: activity.start_date_local,
     distance: activity.distance,
     moving_time: activity.moving_time,
     elapsed_time: activity.elapsed_time,
-    total_elevation_gain: activity.total_elevation_gain,
+    elevation_gain: activity.total_elevation_gain,
     average_speed: activity.average_speed,
     max_speed: activity.max_speed,
-    average_heartrate: activity.average_heartrate || null,
-    max_heartrate: activity.max_heartrate || null,
+    // Map to existing column names (with underscores)
+    average_heart_rate: activity.average_heartrate || null,
+    max_heart_rate: activity.max_heartrate || null,
     average_cadence: activity.average_cadence || null,
-    start_lat: activity.start_latlng?.[0] || null,
-    start_lng: activity.start_latlng?.[1] || null,
-    end_lat: activity.end_latlng?.[0] || null,
-    end_lng: activity.end_latlng?.[1] || null,
-    summary_polyline: activity.map?.summary_polyline || null,
+    // Map to existing column names (full names)
+    start_latitude: activity.start_latlng?.[0] || null,
+    start_longitude: activity.start_latlng?.[1] || null,
+    end_latitude: activity.end_latlng?.[0] || null,
+    end_longitude: activity.end_latlng?.[1] || null,
+    map_summary_polyline: activity.map?.summary_polyline || null,
     calories: activity.calories || null,
     suffer_score: activity.suffer_score || null,
     workout_type: activity.workout_type || null,
