@@ -340,9 +340,9 @@ function mapStravaActivity(activity: StravaActivity, athleteId: number, activity
     average_speed: activity.average_speed,
     max_speed: activity.max_speed,
     // Map to existing column names (with underscores)
-    average_heart_rate: activity.average_heartrate || null,
-    max_heart_rate: activity.max_heartrate || null,
-    average_cadence: activity.average_cadence || null,
+    average_heart_rate: activity.average_heartrate ? Math.round(activity.average_heartrate) : null,
+    max_heart_rate: activity.max_heartrate ? Math.round(activity.max_heartrate) : null,
+    average_cadence: activity.average_cadence ? Math.round(activity.average_cadence) : null,
     // Map to existing column names (full names)
     start_latitude: activity.start_latlng?.[0] || null,
     start_longitude: activity.start_latlng?.[1] || null,

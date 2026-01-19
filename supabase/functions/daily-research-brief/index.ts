@@ -18,7 +18,7 @@ interface ResearchTopic {
 const ALL_TOPICS: ResearchTopic[] = [
   {
     title: 'Emerging Fitness Technology',
-    prompt: `Research the latest emerging technologies in fitness and running apps (2024-2025). Cover: sensor tech, GPS improvements, battery optimization, offline-first patterns. Provide 5 specific, actionable recommendations with implementation priority.`
+    prompt: `Research the latest emerging technologies in fitness and running apps (2025-2026). Cover: sensor tech, GPS improvements, battery optimization, offline-first patterns. Provide 5 specific, actionable recommendations with implementation priority.`
   },
   {
     title: 'AI & Machine Learning Use Cases',
@@ -30,7 +30,7 @@ const ALL_TOPICS: ResearchTopic[] = [
   },
   {
     title: 'iOS Architecture & Performance',
-    prompt: `iOS best practices 2025: SwiftUI optimization, background location, SwiftData, WidgetKit, App Intents, Live Activities, memory/battery optimization. Provide 5 specific architectural patterns and implementation strategies.`
+    prompt: `iOS best practices 2026: SwiftUI optimization, background location, SwiftData, WidgetKit, App Intents, Live Activities, memory/battery optimization. Provide 5 specific architectural patterns and implementation strategies.`
   },
   {
     title: 'Health & Wellness Integration',
@@ -38,7 +38,7 @@ const ALL_TOPICS: ResearchTopic[] = [
   },
   {
     title: 'User Experience & Design Trends',
-    prompt: `Mobile fitness app UX trends 2025: onboarding, data visualization, motivation/habit formation, accessibility, dark mode, haptics. Provide 5 specific UI/UX improvements for a running app.`
+    prompt: `Mobile fitness app UX trends 2026: onboarding, data visualization, motivation/habit formation, accessibility, dark mode, haptics. Provide 5 specific UI/UX improvements for a running app.`
   },
   {
     title: 'Monetization & Growth',
