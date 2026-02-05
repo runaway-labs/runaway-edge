@@ -47,6 +47,13 @@ interface WeatherAnalysis {
   recommendations: string[]
 }
 
+interface VO2MaxWorkoutPlan {
+  name: string
+  description: string
+  frequency: string
+  example: string
+}
+
 interface VO2MaxEstimate {
   vo2_max: number
   fitness_level: string
@@ -54,6 +61,7 @@ interface VO2MaxEstimate {
   vvo2_max_pace: string | null
   race_predictions: RacePrediction[]
   recommendations: string[]
+  improvement_workouts: VO2MaxWorkoutPlan[]
   data_quality_score: number
 }
 
@@ -72,6 +80,7 @@ interface TrainingLoadAnalysis {
   chronic_load_28_days: number
   acwr: number
   weekly_tss: number
+  weekly_volume_km: number
   total_volume_km: number
   recovery_status: string
   injury_risk_level: string
@@ -133,13 +142,13 @@ Deno.serve(async (req) => {
       )
     }
 
-    // Get activities from last 60 days
+    // Get activities from last 60 days (join activity_types to get type name)
     const sixtyDaysAgo = new Date()
     sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60)
 
     const { data: activities, error: activitiesError } = await supabaseAdmin
       .from('activities')
-      .select('*')
+      .select('*, activity_types(id, name)')
       .eq('athlete_id', athlete.id)
       .gte('activity_date', sixtyDaysAgo.toISOString())
       .order('activity_date', { ascending: false })
@@ -149,7 +158,13 @@ Deno.serve(async (req) => {
       console.error('Error fetching activities:', activitiesError)
     }
 
-    const runningActivities = (activities || []).filter(
+    // Map activities to include type from joined activity_types
+    const activitiesWithType = (activities || []).map((a: any) => ({
+      ...a,
+      type: a.activity_types?.name || ''
+    }))
+
+    const runningActivities = activitiesWithType.filter(
       (a: Activity) => a.type?.toLowerCase().includes('run')
     )
 
@@ -161,17 +176,28 @@ Deno.serve(async (req) => {
     // Calculate weather context from activity data
     const weatherContext = calculateWeatherContext(runningActivities)
 
-    // Use AI to generate VO2max estimate and recommendations
+    // Calculate VO2max estimate and recommendations
     let vo2maxEstimate: VO2MaxEstimate | null = null
     let priorityRecommendations: string[] = []
 
-    if (runningActivities.length >= 3 && ANTHROPIC_API_KEY) {
-      try {
-        const aiAnalysis = await generateAIAnalysis(runningActivities, trainingLoad, athlete)
-        vo2maxEstimate = aiAnalysis.vo2maxEstimate
-        priorityRecommendations = aiAnalysis.recommendations
-      } catch (aiError) {
-        console.error('AI analysis failed:', aiError)
+    if (runningActivities.length >= 3) {
+      // Always calculate VO2max using pace-based formula (no AI needed)
+      vo2maxEstimate = calculateVO2MaxFromPace(runningActivities)
+
+      // Try AI for enhanced recommendations if available
+      if (ANTHROPIC_API_KEY) {
+        try {
+          const aiAnalysis = await generateAIAnalysis(runningActivities, trainingLoad, athlete)
+          // Use AI recommendations but keep pace-based VO2max as fallback
+          if (aiAnalysis.vo2maxEstimate) {
+            vo2maxEstimate = aiAnalysis.vo2maxEstimate
+          }
+          priorityRecommendations = aiAnalysis.recommendations
+        } catch (aiError) {
+          console.error('AI analysis failed, using fallback:', aiError)
+          priorityRecommendations = generateFallbackRecommendations(trainingLoad)
+        }
+      } else {
         priorityRecommendations = generateFallbackRecommendations(trainingLoad)
       }
     } else {
@@ -228,7 +254,10 @@ function calculateTrainingLoad(activities: Activity[]): TrainingLoadAnalysis {
 
   const acwr = chronicLoad > 0 ? acuteLoad / chronicLoad : 1.0
 
-  // Total volume in km
+  // Weekly volume (last 7 days) in km
+  const weeklyVolumeKm = last7Days.reduce((sum, a) => sum + (a.distance || 0) / 1000, 0)
+
+  // Total volume (last 28 days) in km - for reference
   const totalVolumeKm = last28Days.reduce((sum, a) => sum + (a.distance || 0) / 1000, 0)
 
   // Determine recovery status based on ACWR
@@ -300,6 +329,7 @@ function calculateTrainingLoad(activities: Activity[]): TrainingLoadAnalysis {
     chronic_load_28_days: Math.round(chronicLoad * 10) / 10,
     acwr: Math.round(acwr * 100) / 100,
     weekly_tss: Math.round(acuteLoad * 10) / 10,
+    weekly_volume_km: Math.round(weeklyVolumeKm * 10) / 10,
     total_volume_km: Math.round(totalVolumeKm * 10) / 10,
     recovery_status: recoveryStatus,
     injury_risk_level: injuryRiskLevel,
@@ -390,6 +420,266 @@ function calculateWeatherContext(activities: Activity[]): WeatherAnalysis | null
     optimal_training_times: ['5:00-7:00 AM', '7:00-9:00 PM'],
     recommendations
   }
+}
+
+// Calculate VO2max from pace using Jack Daniels VDOT formula
+function calculateVO2MaxFromPace(activities: Activity[]): VO2MaxEstimate | null {
+  // Filter activities with valid speed data
+  const validActivities = activities.filter(a => a.average_speed > 0 && a.distance > 1000)
+
+  if (validActivities.length < 3) {
+    return null
+  }
+
+  // Find the best effort (fastest pace for runs > 3km)
+  const qualityRuns = validActivities.filter(a => a.distance >= 3000)
+  if (qualityRuns.length === 0) {
+    return null
+  }
+
+  // Get fastest pace (highest speed) from quality runs
+  const bestRun = qualityRuns.reduce((best, curr) =>
+    curr.average_speed > best.average_speed ? curr : best
+  )
+
+  // Convert to velocity in meters per minute
+  const velocityMPerMin = bestRun.average_speed * 60
+
+  // Jack Daniels VO2 formula: VO2 = -4.60 + 0.182258*v + 0.000104*v²
+  // This gives the oxygen cost at that velocity
+  const vo2AtPace = -4.60 + (0.182258 * velocityMPerMin) + (0.000104 * velocityMPerMin * velocityMPerMin)
+
+  // Duration correction - estimate what % of VO2max this effort represents
+  // Shorter efforts = higher % of VO2max
+  const durationMin = bestRun.moving_time / 60
+  let vo2maxPercent: number
+  if (durationMin <= 10) {
+    vo2maxPercent = 0.98  // Near-max effort
+  } else if (durationMin <= 20) {
+    vo2maxPercent = 0.95
+  } else if (durationMin <= 40) {
+    vo2maxPercent = 0.90
+  } else if (durationMin <= 60) {
+    vo2maxPercent = 0.85
+  } else {
+    vo2maxPercent = 0.80  // Long easy runs
+  }
+
+  // Estimate VO2max
+  const vo2max = vo2AtPace / vo2maxPercent
+
+  // Clamp to reasonable range (30-85)
+  const clampedVo2max = Math.max(30, Math.min(85, vo2max))
+
+  // Determine fitness level
+  let fitnessLevel: string
+  if (clampedVo2max >= 60) {
+    fitnessLevel = 'elite'
+  } else if (clampedVo2max >= 52) {
+    fitnessLevel = 'excellent'
+  } else if (clampedVo2max >= 45) {
+    fitnessLevel = 'good'
+  } else if (clampedVo2max >= 38) {
+    fitnessLevel = 'average'
+  } else {
+    fitnessLevel = 'below_average'
+  }
+
+  // Calculate vVO2max pace (velocity at VO2max)
+  // Solve quadratic: 0.000104*v² + 0.182258*v + (-4.60 - vo2max) = 0
+  const a = 0.000104
+  const b = 0.182258
+  const c = -4.60 - clampedVo2max
+  const vVO2maxMPerMin = (-b + Math.sqrt(b * b - 4 * a * c)) / (2 * a)
+  const vVO2maxPaceMinPerKm = 1000 / vVO2maxMPerMin
+  const vVO2maxPaceFormatted = formatPace(vVO2maxPaceMinPerKm)
+
+  // Generate race predictions using VDOT-based formulas
+  const racePredictions = generateRacePredictions(clampedVo2max)
+
+  // Calculate weekly volume for workout planning
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const last7Days = validActivities.filter(a => new Date(a.activity_date) >= sevenDaysAgo)
+  const weeklyVolumeKm = last7Days.reduce((sum, a) => sum + (a.distance || 0) / 1000, 0)
+
+  // Generate improvement workouts
+  const improvementWorkouts = generateVO2MaxImprovementPlan(clampedVo2max, vVO2maxPaceFormatted, weeklyVolumeKm || 30)
+
+  // Calculate data quality score
+  const dataQuality = Math.min(1, validActivities.length / 10) *
+    (qualityRuns.length >= 5 ? 1 : 0.8)
+
+  return {
+    vo2_max: Math.round(clampedVo2max * 10) / 10,
+    fitness_level: fitnessLevel,
+    estimation_method: 'pace_based_vdot',
+    vvo2_max_pace: vVO2maxPaceFormatted,
+    race_predictions: racePredictions,
+    recommendations: generateVO2MaxRecommendations(clampedVo2max, fitnessLevel),
+    improvement_workouts: improvementWorkouts,
+    data_quality_score: Math.round(dataQuality * 100) / 100
+  }
+}
+
+function formatPace(minPerKm: number): string {
+  const mins = Math.floor(minPerKm)
+  const secs = Math.round((minPerKm - mins) * 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+function generateRacePredictions(vo2max: number): RacePrediction[] {
+  // VDOT-based race time predictions
+  // These are approximations based on Jack Daniels' tables
+  const predictions: RacePrediction[] = []
+
+  const distances = [
+    { name: '5K', km: 5.0 },
+    { name: '10K', km: 10.0 },
+    { name: 'Half Marathon', km: 21.0975 },
+    { name: 'Marathon', km: 42.195 }
+  ]
+
+  for (const dist of distances) {
+    // Estimate race velocity from VO2max
+    // Higher distances = lower % of vVO2max
+    let percentVO2max: number
+    if (dist.km <= 5) {
+      percentVO2max = 0.97
+    } else if (dist.km <= 10) {
+      percentVO2max = 0.93
+    } else if (dist.km <= 21.1) {
+      percentVO2max = 0.85
+    } else {
+      percentVO2max = 0.78
+    }
+
+    // Calculate race VO2 demand
+    const raceVO2 = vo2max * percentVO2max
+
+    // Reverse the Jack Daniels formula to get velocity
+    const a = 0.000104
+    const b = 0.182258
+    const c = -4.60 - raceVO2
+    const velocityMPerMin = (-b + Math.sqrt(b * b - 4 * a * c)) / (2 * a)
+
+    // Calculate time
+    const distanceMeters = dist.km * 1000
+    const timeMinutes = distanceMeters / velocityMPerMin
+    const timeSeconds = Math.round(timeMinutes * 60)
+
+    // Format time
+    const hours = Math.floor(timeSeconds / 3600)
+    const mins = Math.floor((timeSeconds % 3600) / 60)
+    const secs = timeSeconds % 60
+    const timeFormatted = hours > 0
+      ? `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+      : `${mins}:${secs.toString().padStart(2, '0')}`
+
+    // Pace calculations
+    const pacePerKm = timeMinutes / dist.km
+    const pacePerMile = pacePerKm * 1.60934
+
+    predictions.push({
+      distance: dist.name,
+      distance_km: dist.km,
+      predicted_time: timeFormatted,
+      predicted_time_seconds: timeSeconds,
+      pace_per_km: formatPace(pacePerKm),
+      pace_per_mile: formatPace(pacePerMile),
+      confidence: dist.km <= 10 ? 'high' : dist.km <= 21.1 ? 'medium' : 'low'
+    })
+  }
+
+  return predictions
+}
+
+function generateVO2MaxRecommendations(vo2max: number, fitnessLevel: string): string[] {
+  const recommendations: string[] = []
+
+  if (vo2max < 40) {
+    recommendations.push('Focus on building aerobic base with easy runs 3-4x per week.')
+    recommendations.push('Gradually increase weekly mileage by no more than 10% per week.')
+  } else if (vo2max < 50) {
+    recommendations.push('Add tempo runs (20-40min at threshold pace) once per week.')
+    recommendations.push('Include long runs to build endurance for longer races.')
+  } else {
+    recommendations.push('Incorporate interval training (e.g., 5x1000m at 5K pace) for speed.')
+    recommendations.push('Maintain high aerobic volume while adding quality sessions.')
+  }
+
+  recommendations.push(`Your ${fitnessLevel} fitness level suggests good potential for improvement with consistent training.`)
+
+  return recommendations
+}
+
+interface VO2MaxWorkout {
+  name: string
+  description: string
+  frequency: string
+  example: string
+}
+
+function generateVO2MaxImprovementPlan(vo2max: number, vvo2maxPace: string, weeklyVolumeKm: number): VO2MaxWorkout[] {
+  const workouts: VO2MaxWorkout[] = []
+
+  // Calculate training paces based on vVO2max
+  // Parse vVO2max pace (format "M:SS")
+  const [mins, secs] = vvo2maxPace.split(':').map(Number)
+  const vvo2maxMinPerKm = mins + secs / 60
+
+  // Training pace zones
+  const intervalPace = formatPaceFromMinPerKm(vvo2maxMinPerKm) // 95-100% vVO2max
+  const tempoPace = formatPaceFromMinPerKm(vvo2maxMinPerKm * 1.08) // ~88-92% vVO2max
+  const easyPace = formatPaceFromMinPerKm(vvo2maxMinPerKm * 1.35) // ~65-75% vVO2max
+
+  // VO2max intervals - most effective for raising VO2max
+  workouts.push({
+    name: 'VO2max Intervals',
+    description: 'Hard intervals at 95-100% of your max aerobic capacity. The most effective workout for raising VO2max.',
+    frequency: '1x per week',
+    example: `5x1000m at ${intervalPace}/km with 3min jog recovery`
+  })
+
+  // Tempo runs - threshold training
+  workouts.push({
+    name: 'Tempo Run',
+    description: 'Sustained effort at lactate threshold. Improves your ability to hold faster paces longer.',
+    frequency: '1x per week',
+    example: `20-30min continuous at ${tempoPace}/km`
+  })
+
+  // Long run - aerobic base
+  const longRunDistance = Math.min(Math.round(weeklyVolumeKm * 0.3), 25)
+  workouts.push({
+    name: 'Long Run',
+    description: 'Builds aerobic endurance and fat-burning efficiency. Keep it conversational pace.',
+    frequency: '1x per week',
+    example: `${longRunDistance}km at ${easyPace}/km or slower`
+  })
+
+  // Hill repeats - strength + VO2max
+  workouts.push({
+    name: 'Hill Repeats',
+    description: 'Builds running-specific strength while stressing the aerobic system. Great VO2max stimulus with less impact.',
+    frequency: '1x every 2 weeks',
+    example: '8x90sec uphill hard, jog down recovery'
+  })
+
+  // Easy runs - recovery and base
+  workouts.push({
+    name: 'Easy Runs',
+    description: 'Recovery and aerobic base building. Should feel comfortable - you can hold a conversation.',
+    frequency: '2-3x per week',
+    example: `30-45min at ${easyPace}/km or slower`
+  })
+
+  return workouts
+}
+
+function formatPaceFromMinPerKm(minPerKm: number): string {
+  const mins = Math.floor(minPerKm)
+  const secs = Math.round((minPerKm - mins) * 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 // Generate AI-powered VO2max estimate and recommendations
