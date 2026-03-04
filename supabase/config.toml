@@ -157,3 +157,13 @@ entrypoint = "./functions/sync-beta/index.ts"
 enabled = true
 verify_jwt = false  # Strava webhooks don't send JWT auth
 entrypoint = "./functions/strava-webhook/index.ts"
+
+[functions.check-conditions]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-conditions/index.ts"
+
+[functions.process-deliveries]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/process-deliveries/index.ts"

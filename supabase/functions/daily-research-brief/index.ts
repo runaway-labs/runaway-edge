@@ -25,8 +25,17 @@ const ALL_TOPICS: ResearchTopic[] = [
     prompt: `Research cutting-edge AI/ML for running apps: on-device ML (Core ML, Apple Foundation Models), personalized training, injury prediction, voice coaching, readiness scoring. Provide 5 implementation ideas with technical approaches.`
   },
   {
-    title: 'Competitive Analysis',
-    prompt: `Analyze Strava, Nike Run Club, Garmin Connect, WHOOP: engagement features, differentiators, social/gamification, premium features, UX patterns. Focus on features a solo dev can implement. Provide top 5 recommendations.`
+    title: 'Market White Space & Product Vision',
+    prompt: `Think like a product visionary, not a feature analyst. The market has Strava (social), Nike Run Club (guided runs), Garmin (data), WHOOP (recovery) - these problems are solved. Don't suggest competing here.
+
+Instead, explore:
+1. What genuinely doesn't exist yet that runners actually need? What's the unbuilt future?
+2. In a world where "AI-powered" is table stakes, what would be truly novel - not AI as a feature, but AI as a fundamentally different paradigm?
+3. Is a consumer app even the right form factor? Could edge functions, APIs, or backend services be the actual product? What if the value isn't in the UI?
+4. What are runners struggling with that no app addresses because it's hard, unglamorous, or doesn't fit existing business models?
+5. What do emerging technologies (spatial computing, ambient computing, voice-first, wearable ecosystems) enable that wasn't possible before?
+
+Be brutally honest. If there's no white space, say so. Challenge assumptions about what a "running app" should be. Provide 3-5 genuinely unexplored opportunities - or explain why the space is saturated and where adjacent value might exist instead.`
   },
   {
     title: 'iOS Architecture & Performance',

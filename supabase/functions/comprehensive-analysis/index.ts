@@ -311,7 +311,7 @@ function calculateTrainingLoad(activities: Activity[]): TrainingLoadAnalysis {
     recommendations.push(`ACWR is ${acwr.toFixed(2)} (danger zone). Take extra rest days to prevent injury.`)
   }
 
-  recommendations.push('Recovery essentials: 7-9 hours sleep, protein within 30min post-run.')
+  recommendations.push(`Your ${(totalVolumeKm / 4).toFixed(0)}km weekly average over 28 days ${trainingTrend === 'ramping_up' ? 'is trending up — watch your ACWR carefully this week' : trainingTrend === 'tapering' ? 'has been dropping — consider whether this is intentional taper or lost momentum' : 'has been consistent — a good foundation to build from'}.`)
 
   // Daily recommendations
   const dailyRecommendations: { [key: string]: string } = {
@@ -802,7 +802,7 @@ function generateFallbackRecommendations(trainingLoad: TrainingLoadAnalysis): st
   }
 
   // Recovery recommendation
-  recommendations.push('Recovery essentials: 7-9 hours sleep, protein within 30min post-run, foam rolling.')
+  recommendations.push(`Your ${(trainingLoad.total_volume_km / 4).toFixed(0)}km weekly average over the last 28 days ${trainingLoad.training_trend === 'ramping_up' ? 'is trending up — watch your ACWR carefully this week' : trainingLoad.training_trend === 'tapering' ? 'has been dropping — consider whether this is intentional taper or lost momentum' : 'has been consistent — a good foundation to build from'}.`)
 
   // General advice
   recommendations.push('Include one long run per week to build endurance.')

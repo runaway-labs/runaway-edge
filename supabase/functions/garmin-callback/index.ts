@@ -42,10 +42,10 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Retrieve the code verifier and auth_user_id using state
+    // Retrieve the code verifier, auth_user_id, and web_redirect_url using state
     const { data: tokenData, error: tokenError } = await supabaseAdmin
       .from('garmin_oauth_tokens')
-      .select('token_secret, auth_user_id')
+      .select('token_secret, auth_user_id, web_redirect_url')
       .eq('oauth_token', state)
       .single()
 
@@ -56,6 +56,7 @@ Deno.serve(async (req) => {
 
     const codeVerifier = tokenData.token_secret
     const authUserId = tokenData.auth_user_id
+    const webRedirectUrl = tokenData.web_redirect_url
 
     // Exchange authorization code for access token
     const redirectUri = `${SUPABASE_URL}/functions/v1/garmin-callback`
@@ -84,7 +85,7 @@ Deno.serve(async (req) => {
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text()
       console.error('Token exchange failed:', errorText)
-      return createErrorResponse(`Token exchange failed: ${tokenResponse.status}`)
+      return createErrorResponse(`Token exchange failed: ${tokenResponse.status}`, webRedirectUrl)
     }
 
     const tokenJson = await tokenResponse.json()
@@ -93,7 +94,7 @@ Deno.serve(async (req) => {
     const expiresIn = tokenJson.expires_in
 
     if (!accessToken) {
-      return createErrorResponse('Invalid token response from Garmin')
+      return createErrorResponse('Invalid token response from Garmin', webRedirectUrl)
     }
 
     console.log('Access token obtained successfully')
@@ -143,15 +144,23 @@ Deno.serve(async (req) => {
 
     console.log('Garmin credentials stored successfully')
 
-    // Redirect back to app with success using 302 redirect
-    // ASWebAuthenticationSession needs a direct redirect, not an HTML page
-    const deepLink = `runaway://garmin-connected?success=true`
+    // Redirect back to app/web with success
+    let redirectUrl: string
+    if (webRedirectUrl) {
+      // Web redirect - append success parameter
+      const url = new URL(webRedirectUrl)
+      url.searchParams.set('garmin', 'connected')
+      redirectUrl = url.toString()
+    } else {
+      // iOS deep link fallback
+      redirectUrl = `runaway://garmin-connected?success=true`
+    }
 
     return new Response(null, {
       status: 302,
       headers: {
         ...corsHeaders,
-        'Location': deepLink
+        'Location': redirectUrl
       }
     })
 
@@ -161,15 +170,24 @@ Deno.serve(async (req) => {
   }
 })
 
-function createErrorResponse(message: string): Response {
-  // Use 302 redirect for ASWebAuthenticationSession compatibility
-  const deepLink = `runaway://garmin-connected?success=false&error=${encodeURIComponent(message)}`
+function createErrorResponse(message: string, webRedirectUrl?: string | null): Response {
+  let redirectUrl: string
+  if (webRedirectUrl) {
+    // Web redirect - append error parameter
+    const url = new URL(webRedirectUrl)
+    url.searchParams.set('garmin', 'error')
+    url.searchParams.set('error', message)
+    redirectUrl = url.toString()
+  } else {
+    // iOS deep link fallback
+    redirectUrl = `runaway://garmin-connected?success=false&error=${encodeURIComponent(message)}`
+  }
 
   return new Response(null, {
     status: 302,
     headers: {
       ...corsHeaders,
-      'Location': deepLink
+      'Location': redirectUrl
     }
   })
 }

@@ -50,12 +50,16 @@ Deno.serve(async (req) => {
     // Get the auth_user_id from the request (to link the connection later)
     let authUserId: string | null = null
 
+    let webRedirectUrl: string | null = null
+
     if (req.method === 'POST') {
       const body = await req.json()
       authUserId = body.auth_user_id || null
+      webRedirectUrl = body.web_redirect_url || null
     } else {
       const url = new URL(req.url)
       authUserId = url.searchParams.get('auth_user_id')
+      webRedirectUrl = url.searchParams.get('web_redirect_url')
     }
 
     console.log('Initiating Garmin OAuth 2.0 PKCE for user:', authUserId)
@@ -84,6 +88,7 @@ Deno.serve(async (req) => {
         oauth_token: state, // Use state as the key
         token_secret: codeVerifier, // Store code_verifier in token_secret field
         auth_user_id: authUserId,
+        web_redirect_url: webRedirectUrl, // Store web redirect URL for callback
         created_at: new Date().toISOString(),
         expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10 min expiry
       }, { onConflict: 'oauth_token' })
