@@ -95,12 +95,20 @@ Their recent 8 weeks of training:
 - Recent 4-week vs prior 4-week volume: ${trend > 0 ? '+' : ''}${(trend * 100).toFixed(0)}% ${trend > 0 ? 'building' : trend < -0.05 ? 'declining' : 'flat'}
 - Current average pace: ${avgPaceSecPerMi ? fmtPace(avgPaceSecPerMi) : 'unknown'}
 
-Assess in 3-4 sentences ONLY:
-1. Is the current training volume/pace consistent with reaching this goal?
-2. What's the honest gap — are they on track, ahead, or behind?
-3. One specific thing their training data says they need to do differently (or confirms they're doing right).
+Return ONLY valid JSON (no markdown, no code blocks) in this exact format:
+{
+  "insights": [
+    { "title": "short sharp headline about where they stand", "detail": "1-2 sentences with specific numbers, honest assessment" },
+    { "title": "what the gap actually is", "detail": "1-2 sentences on the delta between current training and what the goal requires" },
+    { "title": "the single most important thing to do now", "detail": "1-2 sentences, specific, actionable, based on their data" }
+  ]
+}
 
-Be direct. Reference their actual numbers. Do not give generic advice. Do not use bullet points.`
+Rules:
+- 3 insights total, each with a title (max 8 words) and detail (1-2 sentences)
+- Second person voice. Reference actual numbers.
+- No generic advice. No cheerleading. Be honest about whether they'll make it.
+- Do not wrap in markdown or add any text outside the JSON.`
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -111,16 +119,26 @@ Be direct. Reference their actual numbers. Do not give generic advice. Do not us
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5',
-        max_tokens: 300,
+        max_tokens: 500,
         messages: [{ role: 'user', content: prompt }],
       }),
     })
 
     const result = await response.json()
-    const assessment = result.content?.[0]?.text ?? 'Unable to generate assessment.'
+    const rawText = result.content?.[0]?.text ?? '{}'
+
+    // Parse structured insights, fall back gracefully
+    let insights: { title: string; detail: string }[] = []
+    try {
+      const parsed = JSON.parse(rawText)
+      insights = parsed.insights ?? []
+    } catch {
+      // If model didn't return clean JSON, wrap the raw text as a single insight
+      insights = [{ title: 'Training assessment', detail: rawText }]
+    }
 
     return new Response(
-      JSON.stringify({ assessment, weekly_mileage: weeklyMileage, trend, avg_pace_sec: avgPaceSecPerMi, days_left: daysLeft }),
+      JSON.stringify({ insights, weekly_mileage: weeklyMileage, trend, avg_pace_sec: avgPaceSecPerMi, days_left: daysLeft }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (err) {
