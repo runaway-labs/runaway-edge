@@ -699,40 +699,44 @@ async function generateAIAnalysis(
   const longestRun = Math.max(...activities.map(a => a.distance || 0)) / 1000
   const fastestPace = Math.min(...activities.filter(a => a.average_speed > 0).map(a => (1609.34 / a.average_speed) / 60))
 
-  const prompt = `Analyze this runner's data and estimate their VO2max and race predictions.
+  const prompt = `This runner's current training data:
+- Name: ${athlete.first_name}
+- ACWR: ${trainingLoad.acwr} (${trainingLoad.injury_risk_level} risk, ${trainingLoad.recovery_status})
+- Acute load 7d: ${trainingLoad.acute_load_7_days}, Chronic load 28d avg: ${trainingLoad.chronic_load_28_days}
+- Training trend: ${trainingLoad.training_trend}
+- Weekly volume last 7 days: ${trainingLoad.weekly_volume_km.toFixed(1)} km
+- 28-day avg weekly volume: ${(trainingLoad.total_volume_km / 4).toFixed(1)} km/week
+- Average pace (last 20 runs): ${avgPace.toFixed(2)} min/mile
+- Fastest recent pace: ${fastestPace.toFixed(2)} min/mile
+- Longest recent run: ${longestRun.toFixed(1)} km
 
-Runner Profile:
-- Name: ${athlete.first_name} ${athlete.last_name}
-- Location: ${[athlete.city, athlete.state].filter(Boolean).join(', ') || 'Unknown'}
+Generate 3 priority_recommendations. Rules:
+1. Each must reference at least one specific number from their data above
+2. Each must be actionable for THIS week specifically
+3. Do NOT include generic wellness advice (no sleep tips, no "eat protein", no foam rolling)
+4. Write like a coach who knows this athlete's numbers intimately
 
-Training Data (last 60 days):
-- Total runs: ${activities.length}
-- Average pace: ${avgPace.toFixed(2)} min/mile
-- Fastest pace: ${fastestPace.toFixed(2)} min/mile
-- Longest run: ${longestRun.toFixed(1)} km
-- Weekly volume: ${(trainingLoad.total_volume_km / 4).toFixed(1)} km
-- ACWR: ${trainingLoad.acwr}
+Also estimate VO2max and race predictions using Jack Daniels VDOT method.
 
-Respond with ONLY valid JSON matching this structure:
+Return ONLY valid JSON:
 {
-  "vo2_max": number (estimated VO2max in ml/kg/min),
-  "fitness_level": "elite" | "excellent" | "good" | "average" | "below_average",
+  "vo2_max": number,
+  "fitness_level": "elite"|"excellent"|"good"|"average"|"below_average",
   "estimation_method": "pace_analysis",
-  "vvo2_max_pace": "M:SS" format or null,
+  "vvo2_max_pace": "M:SS",
   "race_predictions": [
-    {
-      "distance": "5K",
-      "distance_km": 5.0,
-      "predicted_time": "H:MM:SS",
-      "predicted_time_seconds": number,
-      "pace_per_km": "M:SS",
-      "pace_per_mile": "M:SS",
-      "confidence": "high" | "medium" | "low"
-    }
+    { "distance": "5K", "distance_km": 5.0, "predicted_time": "MM:SS", "predicted_time_seconds": number, "pace_per_km": "M:SS", "pace_per_mile": "M:SS", "confidence": "high" },
+    { "distance": "10K", "distance_km": 10.0, "predicted_time": "MM:SS", "predicted_time_seconds": number, "pace_per_km": "M:SS", "pace_per_mile": "M:SS", "confidence": "medium" },
+    { "distance": "Half Marathon", "distance_km": 21.0975, "predicted_time": "H:MM:SS", "predicted_time_seconds": number, "pace_per_km": "M:SS", "pace_per_mile": "M:SS", "confidence": "medium" },
+    { "distance": "Marathon", "distance_km": 42.195, "predicted_time": "H:MM:SS", "predicted_time_seconds": number, "pace_per_km": "M:SS", "pace_per_mile": "M:SS", "confidence": "low" }
   ],
-  "recommendations": ["string", "string"],
-  "data_quality_score": number 0-1,
-  "priority_recommendations": ["string", "string", "string"]
+  "recommendations": ["string referencing their data", "string referencing their data"],
+  "data_quality_score": number between 0 and 1,
+  "priority_recommendations": [
+    "recommendation 1 with specific number from their data",
+    "recommendation 2 with specific number from their data",
+    "recommendation 3 with specific number from their data"
+  ]
 }`
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -801,8 +805,14 @@ function generateFallbackRecommendations(trainingLoad: TrainingLoadAnalysis): st
     recommendations.push('Good training volume. Focus on quality sessions while maintaining mileage.')
   }
 
-  // Recovery recommendation
-  recommendations.push(`Your ${(trainingLoad.total_volume_km / 4).toFixed(0)}km weekly average over the last 28 days ${trainingLoad.training_trend === 'ramping_up' ? 'is trending up — watch your ACWR carefully this week' : trainingLoad.training_trend === 'tapering' ? 'has been dropping — consider whether this is intentional taper or lost momentum' : 'has been consistent — a good foundation to build from'}.`)
+  // Volume trend recommendation
+  const avgWeekly = (trainingLoad.total_volume_km / 4).toFixed(0)
+  const trendMsg = trainingLoad.training_trend === 'ramping_up'
+    ? `trending up — keep weekly increases under 10%`
+    : trainingLoad.training_trend === 'tapering'
+    ? `dropping — confirm this is intentional before the next block`
+    : `consistent — solid base to build from`
+  recommendations.push(`Your ${avgWeekly}km weekly average over 28 days is ${trendMsg}.`)
 
   // General advice
   recommendations.push('Include one long run per week to build endurance.')

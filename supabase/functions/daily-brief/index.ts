@@ -35,8 +35,8 @@ function calculateACWR(activities: Activity[]): {
   acwr: number
   acuteLoad: number
   chronicLoad: number
-  totalVolumeKm: number
-  weeklyVolumeKm: number
+  totalVolumeMi: number
+  weeklyVolumeMi: number
   trainingTrend: string
 } {
   const now = new Date()
@@ -64,8 +64,9 @@ function calculateACWR(activities: Activity[]): {
   const chronicLoad = last28.length > 0 ? last28.reduce((sum, a) => sum + toTSS(a), 0) / 4 : 0
   const acwr = chronicLoad > 0 ? acuteLoad / chronicLoad : 1.0
 
-  const weeklyVolumeKm = last7.reduce((sum, a) => sum + (a.distance || 0) / 1000, 0)
-  const totalVolumeKm = last28.reduce((sum, a) => sum + (a.distance || 0) / 1000, 0)
+  const KM_TO_MI = 0.621371
+  const weeklyVolumeMi = last7.reduce((sum, a) => sum + (a.distance || 0) / 1000 * KM_TO_MI, 0)
+  const totalVolumeMi = last28.reduce((sum, a) => sum + (a.distance || 0) / 1000 * KM_TO_MI, 0)
 
   const first14 = last28.filter(a => {
     const d = new Date(a.activity_date)
@@ -88,9 +89,32 @@ function calculateACWR(activities: Activity[]): {
     acwr: Math.round(acwr * 100) / 100,
     acuteLoad: Math.round(acuteLoad * 10) / 10,
     chronicLoad: Math.round(chronicLoad * 10) / 10,
-    totalVolumeKm: Math.round(totalVolumeKm * 10) / 10,
-    weeklyVolumeKm: Math.round(weeklyVolumeKm * 10) / 10,
+    totalVolumeMi: Math.round(totalVolumeMi * 10) / 10,
+    weeklyVolumeMi: Math.round(weeklyVolumeMi * 10) / 10,
     trainingTrend,
+  }
+}
+
+function getACWRState(acwr: number): { state: string; voice: string } {
+  if (acwr < 0.8) return {
+    state: 'underloading',
+    voice: "You're fading. Your body has built capacity you're not using — it's craving load."
+  }
+  if (acwr <= 1.0) return {
+    state: 'maintenance',
+    voice: "You're in maintenance. Solid base, but not building right now."
+  }
+  if (acwr <= 1.3) return {
+    state: 'optimal',
+    voice: "You're in the flow. Load and capacity are matched — this is the sweet spot."
+  }
+  if (acwr <= 1.5) return {
+    state: 'caution',
+    voice: "You're flirting with the edge. Your spike load is 30-50% above your base. Pull back or pay later."
+  }
+  return {
+    state: 'danger',
+    voice: "You're in the red. Load is more than 50% above your chronic base. This is where injuries happen."
   }
 }
 
@@ -99,14 +123,14 @@ function buildLast5Snippet(activities: Activity[]): string {
     (a, b) => new Date(b.activity_date).getTime() - new Date(a.activity_date).getTime()
   )
   return sorted.slice(0, 5).map(a => {
-    const km = ((a.distance || 0) / 1000).toFixed(1)
+    const mi = ((a.distance || 0) / 1609.34).toFixed(2)
     const pace = a.average_speed && a.average_speed > 0
       ? `${((1609.34 / a.average_speed) / 60).toFixed(2)} min/mi`
       : 'N/A'
     const hr = a.average_heartrate ? `, HR ${Math.round(a.average_heartrate)}bpm` : ''
     const type = a.activity_types?.name ?? 'Run'
     const date = new Date(a.activity_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    return `  ${date}: ${km}km @ ${pace}${hr} (${type})`
+    return `  ${date}: ${mi}mi @ ${pace}${hr} (${type})`
   }).join('\n')
 }
 
@@ -116,7 +140,6 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Auth: extract JWT → get user
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
@@ -134,10 +157,9 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Get athlete
     const { data: athlete, error: athleteError } = await supabase
       .from('athletes')
-      .select('id, first_name, email, daily_brief, daily_brief_generated_at')
+      .select('id, first_name, email, daily_brief, daily_brief_generated_at, garmin_connected, garmin_fitness_stats')
       .eq('auth_user_id', user.id)
       .single()
 
@@ -147,8 +169,8 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Cache check: return cached brief if < 6 hours old
-    if (athlete.daily_brief_generated_at && athlete.daily_brief) {
+    const forceRefresh = new URL(req.url).searchParams.get('refresh') === 'true'
+    if (!forceRefresh && athlete.daily_brief_generated_at && athlete.daily_brief) {
       const generatedAt = new Date(athlete.daily_brief_generated_at)
       const ageHours = (Date.now() - generatedAt.getTime()) / 3600000
       if (ageHours < CACHE_HOURS) {
@@ -162,9 +184,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fetch data in parallel
-    const thirtyDaysAgo = new Date()
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+    const sixtyDaysAgo = new Date()
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60)
     const today = new Date().toISOString().split('T')[0]
 
     const [activitiesResult, raceResult, planResult] = await Promise.all([
@@ -172,9 +193,9 @@ Deno.serve(async (req) => {
         .from('activities')
         .select('*, activity_types(id, name)')
         .eq('athlete_id', athlete.id)
-        .gte('activity_date', thirtyDaysAgo.toISOString().split('T')[0])
+        .gte('activity_date', sixtyDaysAgo.toISOString().split('T')[0])
         .order('activity_date', { ascending: false })
-        .limit(30),
+        .limit(60),
 
       supabase
         .from('runners')
@@ -193,17 +214,15 @@ Deno.serve(async (req) => {
     ])
 
     const activities = (activitiesResult.data ?? []) as Activity[]
+    const RUN_TYPES = new Set(['Run', 'Running', 'Trail Run', 'Trail Running', 'Treadmill', 'Treadmill Running', 'Virtual Run', 'Race'])
     const runningActivities = activities.filter(a =>
-      a.activity_types?.name === 'Run' || a.activity_types?.name === 'Running'
+      !a.activity_types?.name || RUN_TYPES.has(a.activity_types.name)
     )
 
-    // ACWR and volume summary
     const loadMetrics = calculateACWR(runningActivities)
-
-    // Last 5 activities snippet
+    const acwrState = getACWRState(loadMetrics.acwr)
     const last5 = buildLast5Snippet(runningActivities)
 
-    // Next race
     let nextRaceText = 'No upcoming races registered'
     const raceRow = raceResult.data?.[0] as { races: { race_name: string; race_date: string; city?: string; state?: string; distance_km?: number } } | undefined
     if (raceRow?.races) {
@@ -214,55 +233,81 @@ Deno.serve(async (req) => {
       nextRaceText = `${r.race_name}${r.distance_km ? ` (${r.distance_km}km)` : ''} in ${daysOut} days${r.city ? `, ${r.city}` : ''}`
     }
 
-    // Latest training plan
     let planText = 'No training plan on file'
     const planRow = planResult.data?.[0]
     if (planRow) {
       planText = `Week of ${planRow.week_start_date}, planned ${planRow.total_planned_km ?? '?'}km`
     }
 
-    // Build Claude prompt
-    const systemPrompt = `You are the athlete's digital running twin — a deeply personalized AI coach that knows their training history intimately. Speak in first person about their data ("Your ACWR hit 1.4..."), not in generic advice mode. Never say "7-9 hours sleep" or other generic wellness platitudes. Reference specific numbers from their recent training. Be direct, human, and conversational — like a coach texting before a morning run.`
+    const garmin = athlete.garmin_fitness_stats as Record<string, unknown> | null
+    let garminSection = ''
+    if (athlete.garmin_connected && garmin) {
+      const lines: string[] = []
+      if (garmin.vo2Max) lines.push(`- Device VO2max: ${garmin.vo2Max} ml/kg/min`)
+      if (garmin.trainingStatus) lines.push(`- Training status: ${garmin.trainingStatus}${garmin.trainingStatusDescription ? ` — ${garmin.trainingStatusDescription}` : ''}`)
+      if (garmin.recoveryTime) lines.push(`- Recovery time remaining: ${garmin.recoveryTime}h`)
+      if (garmin.bodyBattery != null) lines.push(`- Body Battery: ${garmin.bodyBattery}/100`)
+      if (garmin.hrvStatus) lines.push(`- HRV status: ${garmin.hrvStatus}${garmin.hrvValue ? ` (${garmin.hrvValue}ms)` : ''}`)
+      if (garmin.restingHeartRate) lines.push(`- Resting HR: ${garmin.restingHeartRate}bpm`)
+      if (garmin.sleepScore) lines.push(`- Last sleep score: ${garmin.sleepScore}/100`)
+      if (garmin.trainingLoad) lines.push(`- Garmin training load (7d): ${garmin.trainingLoad}`)
+      if (lines.length > 0) garminSection = `\nGarmin Device Data:\n${lines.join('\n')}`
+    }
+
+    const systemPrompt = `You are the athlete's digital running twin — a deeply personalized AI that has studied their full training history. You are not a coach. You are a mirror. You reflect what the data shows about who they are becoming as an athlete.
+
+Your voice: direct, second person, declarative. Like a training partner who has been with them for every run and knows the numbers cold. No cheerleading. No judgment. When the data says something good, say it. When the data says something concerning, say it straight.
+
+ACWR is your primary signal for training state. Use this language system exactly:
+- ACWR < 0.8: "You're fading. Your body has built capacity you're not using."
+- ACWR 0.8–1.0: "You're in maintenance. Solid base, not building."
+- ACWR 1.0–1.3: "You're in the flow. Load and capacity are matched."
+- ACWR 1.3–1.5: "You're flirting with the edge. Pull back or pay later."
+- ACWR > 1.5: "You're in the red. This is where injuries happen."
+
+Current ACWR state for this athlete: ${acwrState.state} (${loadMetrics.acwr})
+Reference voice for this state: "${acwrState.voice}"
+
+Every sentence must reference actual numbers. Never give generic advice. If Garmin data is present, it overrides estimated values — those numbers are live from the device.`
 
     const userPrompt = `Generate a daily training brief for ${athlete.first_name ?? 'the athlete'}.
 
-Training Load (last 30 days):
-- ACWR: ${loadMetrics.acwr} (acute/chronic workload ratio)
+Training Load (last 28 days):
+- ACWR: ${loadMetrics.acwr} — state: ${acwrState.state}
 - Acute load (7d): ${loadMetrics.acuteLoad}
 - Chronic load (28d avg): ${loadMetrics.chronicLoad}
-- This week's volume: ${loadMetrics.weeklyVolumeKm}km
-- 28-day total volume: ${loadMetrics.totalVolumeKm}km (avg ${(loadMetrics.totalVolumeKm / 4).toFixed(1)}km/week)
+- This week's volume: ${loadMetrics.weeklyVolumeMi}mi
+- 28-day total: ${loadMetrics.totalVolumeMi}mi (avg ${(loadMetrics.totalVolumeMi / 4).toFixed(1)}mi/week)
 - Training trend: ${loadMetrics.trainingTrend}
-
+${garminSection}
 Last 5 runs:
 ${last5 || '  No recent runs'}
 
 Next race: ${nextRaceText}
 Training plan: ${planText}
 
-Respond with ONLY valid JSON matching this exact structure:
+Respond with ONLY valid JSON:
 {
-  "brief": "2-4 sentence narrative referencing their actual numbers and recent training pattern",
-  "today_action": "One specific action for today (15 words max)",
-  "insight": "One data-backed observation they might not have noticed (20 words max)",
-  "tone": "positive" | "cautionary" | "neutral"
+  "brief": "2-4 sentences. Must reference ACWR state using the voice system above. Must include at least 2 specific numbers. No generic advice.",
+  "today_action": "One specific concrete action for today. Max 15 words. Must be specific (e.g. '45min easy, HR under 140' not 'rest and recover').",
+  "insight": "One data pattern they may not have noticed. Max 20 words. Must cite a number.",
+  "tone": "cautionary if ACWR > 1.3 | positive if ACWR 0.8–1.3 and trend is ramping_up | neutral otherwise"
 }
 
 Rules:
-- brief must reference at least one specific number (ACWR, km, pace, days to race, etc.)
-- today_action must be concrete (e.g. "30min easy run, keep HR under 145" not "rest and recover")
-- tone is "cautionary" if ACWR > 1.3, "positive" if ACWR 0.8-1.3 and trend is ramping_up, else "neutral"
-- Never use generic recovery platitudes`
+- Never use: 'stay hydrated', 'listen to your body', 'recovery is important', 'great job'
+- Always use their name in the brief
+- Tone must match ACWR state exactly`
 
     const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': ANTHROPIC_API_KEY || '',
-        'anthropic-version': '2024-10-22',
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-4-5',
         max_tokens: 600,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
@@ -285,7 +330,6 @@ Rules:
     const result: DailyBriefResult = JSON.parse(jsonText)
     const generatedAt = new Date().toISOString()
 
-    // Cache result
     await supabase
       .from('athletes')
       .update({ daily_brief: result, daily_brief_generated_at: generatedAt })
