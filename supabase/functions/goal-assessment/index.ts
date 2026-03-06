@@ -127,14 +127,20 @@ Rules:
     const result = await response.json()
     const rawText = result.content?.[0]?.text ?? '{}'
 
+    // Strip markdown code fences if model wrapped the JSON anyway
+    const cleaned = rawText
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```\s*$/, '')
+      .trim()
+
     // Parse structured insights, fall back gracefully
     let insights: { title: string; detail: string }[] = []
     try {
-      const parsed = JSON.parse(rawText)
+      const parsed = JSON.parse(cleaned)
       insights = parsed.insights ?? []
     } catch {
-      // If model didn't return clean JSON, wrap the raw text as a single insight
-      insights = [{ title: 'Training assessment', detail: rawText }]
+      // If model still didn't return clean JSON, wrap the raw text as a single insight
+      insights = [{ title: 'Training assessment', detail: cleaned }]
     }
 
     return new Response(
