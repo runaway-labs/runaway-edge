@@ -224,6 +224,9 @@ Deno.serve(async (req) => {
     const last5 = buildLast5Snippet(runningActivities)
 
     let nextRaceText = 'No upcoming races registered'
+    let racePhaseText = ''
+    let racePhaseGuidance = ''
+    let racePhaseName = ''
     const raceRow = raceResult.data?.[0] as { races: { race_name: string; race_date: string; city?: string; state?: string; distance_km?: number } } | undefined
     if (raceRow?.races) {
       const r = raceRow.races
@@ -231,6 +234,28 @@ Deno.serve(async (req) => {
         (new Date(r.race_date + 'T00:00:00').getTime() - Date.now()) / 86400000
       )
       nextRaceText = `${r.race_name}${r.distance_km ? ` (${r.distance_km}km)` : ''} in ${daysOut} days${r.city ? `, ${r.city}` : ''}`
+
+      // Compute race phase
+      if (daysOut === 0) {
+        racePhaseName = 'Race Day'
+        racePhaseGuidance = 'This is race day. Everything you have built comes out today.'
+      } else if (daysOut <= 7) {
+        racePhaseName = 'Race Week'
+        racePhaseGuidance = 'Race week protocol: sleep, carbs, easy legs only. Nothing they do this week adds fitness — it can only subtract it. Guard the legs.'
+      } else if (daysOut <= 14) {
+        racePhaseName = 'Taper'
+        racePhaseGuidance = 'Taper phase. Volume drops are intentional and correct. A lower ACWR right now is the goal, not a warning sign. Reassure them: they are not losing fitness, they are storing it.'
+      } else if (daysOut <= 28) {
+        racePhaseName = 'Peak'
+        racePhaseGuidance = 'Peak phase. Last race-pace quality work this week. No new aerobic fitness can be built in 2-4 weeks — execution of the plan matters now, not heroics.'
+      } else if (daysOut <= 42) {
+        racePhaseName = 'Final Build'
+        racePhaseGuidance = 'Final build phase. This is the last window for meaningful training stimulus. Long runs and quality work this week matter more than any other week left. Make it count.'
+      } else {
+        racePhaseName = 'Base Building'
+        racePhaseGuidance = 'Base phase. Aerobic foundation is the priority. Volume over intensity. Consistency beats heroics.'
+      }
+      racePhaseText = `${racePhaseName} phase — ${daysOut} days to ${r.race_name}`
     }
 
     let planText = 'No training plan on file'
@@ -268,6 +293,11 @@ ACWR is your primary signal for training state. Use this language system exactly
 Current ACWR state for this athlete: ${acwrState.state} (${loadMetrics.acwr})
 Reference voice for this state: "${acwrState.voice}"
 
+${racePhaseText ? `Race phase context: The athlete is in ${racePhaseText}. Your brief MUST reflect this phase. ${racePhaseGuidance}
+
+During taper/race week: ACWR dropping is correct and expected — reframe the ACWR state with this in mind. Do NOT say a lower ACWR is alarming if the athlete is tapering.
+During final build/peak: Urgency is real. Name the phase. These weeks matter more than any others.
+` : ''}
 Every sentence must reference actual numbers. Never give generic advice. If Garmin data is present, it overrides estimated values — those numbers are live from the device.`
 
     const userPrompt = `Generate a daily training brief for ${athlete.first_name ?? 'the athlete'}.
@@ -283,7 +313,9 @@ ${garminSection}
 Last 5 runs:
 ${last5 || '  No recent runs'}
 
-Next race: ${nextRaceText}
+Next race: ${nextRaceText}${racePhaseText ? `
+Race phase: ${racePhaseText}
+Phase guidance: ${racePhaseGuidance}` : ''}
 Training plan: ${planText}
 
 Respond with ONLY valid JSON:
