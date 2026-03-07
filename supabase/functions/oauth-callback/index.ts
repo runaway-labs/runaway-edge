@@ -13,24 +13,47 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
+  // Define these here so they are available in catch block
+  let parsedAuthUserId: string | null = null
+  let webRedirectUrl: string | null = null
+
   try {
     const url = new URL(req.url)
     const code = url.searchParams.get('code')
     const state = url.searchParams.get('state') // Contains auth_user_id from app
     const error = url.searchParams.get('error')
 
+    // Parse state: try base64 JSON (web flow), fall back to plain string (mobile flow)
+    parsedAuthUserId = state
+    if (state) {
+      try {
+        const decoded = JSON.parse(atob(state))
+        if (decoded.auth_user_id !== undefined) {
+          parsedAuthUserId = decoded.auth_user_id
+          webRedirectUrl = decoded.web_redirect_url || null
+        }
+      } catch {
+        // state is a plain auth_user_id string (mobile flow)
+        parsedAuthUserId = state
+      }
+    }
+
     // Handle authorization denial
     if (error) {
       console.log('OAuth denied:', error)
-      const deniedDeepLink = `runaway://strava-connected?success=false&error=${encodeURIComponent('Authorization denied')}`
-
-      return new Response(null, {
-        status: 302,
-        headers: {
-          ...corsHeaders,
-          'Location': deniedDeepLink
-        }
-      })
+      
+      if (webRedirectUrl) {
+        return new Response(null, {
+          status: 302,
+          headers: { ...corsHeaders, 'Location': `${webRedirectUrl}?strava=error&error=${encodeURIComponent('Authorization denied')}` }
+        })
+      } else {
+        const deniedDeepLink = `runaway://strava-connected?success=false&error=${encodeURIComponent('Authorization denied')}`
+        return new Response(null, {
+          status: 302,
+          headers: { ...corsHeaders, 'Location': deniedDeepLink }
+        })
+      }
     }
 
     if (!code) {
@@ -76,7 +99,7 @@ Deno.serve(async (req) => {
     // Store tokens and athlete data in Supabase
     const athleteData = {
       id: athlete.id,
-      auth_user_id: state || null, // Link to Supabase auth user
+      auth_user_id: parsedAuthUserId || null, // Link to Supabase auth user
       first_name: athlete.firstname,
       last_name: athlete.lastname,
       email: athlete.email || null,
@@ -104,29 +127,49 @@ Deno.serve(async (req) => {
       throw new Error(`Database error: ${upsertError.message}`)
     }
 
+    // If web flow: also update the existing athlete record matched by auth_user_id
+    if (parsedAuthUserId && webRedirectUrl) {
+      await supabaseAdmin
+        .from('athletes')
+        .update({
+          strava_athlete_id: athlete.id,
+          strava_connected: true,
+          strava_connected_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('auth_user_id', parsedAuthUserId)
+    }
+
     console.log('Athlete data stored successfully:', athlete.id)
 
-    // Redirect back to app with success using 302 redirect
-    const deepLink = `runaway://strava-connected?success=true&athlete_id=${athlete.id}`
-
-    return new Response(null, {
-      status: 302,
-      headers: {
-        ...corsHeaders,
-        'Location': deepLink
-      }
-    })
+    // Redirect back to app/web with success
+    if (webRedirectUrl) {
+      return new Response(null, {
+        status: 302,
+        headers: { ...corsHeaders, 'Location': `${webRedirectUrl}?strava=connected` }
+      })
+    } else {
+      const deepLink = `runaway://strava-connected?success=true&athlete_id=${athlete.id}`
+      return new Response(null, {
+        status: 302,
+        headers: { ...corsHeaders, 'Location': deepLink }
+      })
+    }
 
   } catch (error) {
     console.error('OAuth callback error:', error)
-    const errorDeepLink = `runaway://strava-connected?success=false&error=${encodeURIComponent(error.message)}`
-
-    return new Response(null, {
-      status: 302,
-      headers: {
-        ...corsHeaders,
-        'Location': errorDeepLink
-      }
-    })
+    
+    if (webRedirectUrl) {
+      return new Response(null, {
+        status: 302,
+        headers: { ...corsHeaders, 'Location': `${webRedirectUrl}?strava=error&error=${encodeURIComponent(error.message)}` }
+      })
+    } else {
+      const errorDeepLink = `runaway://strava-connected?success=false&error=${encodeURIComponent(error.message)}`
+      return new Response(null, {
+        status: 302,
+        headers: { ...corsHeaders, 'Location': errorDeepLink }
+      })
+    }
   }
 })
