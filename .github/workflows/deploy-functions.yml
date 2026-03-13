@@ -14,6 +14,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Notify Deploy Started
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          status: in-progress
+          title: "Runaway Edge: Function Deploy Started"
+          description: |
+            **Commit**: `${{ github.sha }}`
+            **Message**: ${{ github.event.head_commit.message }}
+          color: 0xF59E0B
+
       - uses: supabase/setup-cli@v1
         with:
           version: latest
@@ -34,3 +45,15 @@ jobs:
           done
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Notify Deploy Result
+        if: always()
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          status: ${{ job.status }}
+          title: "Runaway Edge: Function Deploy ${{ job.status }}"
+          description: |
+            **Commit**: `${{ github.sha }}`
+            **Result**: ${{ job.status }}
+          color: ${{ job.status == 'success' && '0x10B981' || '0xEF4444' }}
