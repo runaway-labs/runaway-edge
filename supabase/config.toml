@@ -167,3 +167,8 @@ entrypoint = "./functions/check-conditions/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/process-deliveries/index.ts"
+
+[functions.max-data]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/max-data/index.ts"

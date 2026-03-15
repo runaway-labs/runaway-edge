@@ -1,6 +1,5 @@
 // Supabase Edge Function: daily-brief
 // Generates a personalized 2-4 sentence daily training brief from the athlete's digital twin
-// v2: Added Twin Taper Mode — special phase detection + voice for 21 days pre-race
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
@@ -22,8 +21,7 @@ interface Activity {
   moving_time: number
   average_speed: number
   average_heartrate?: number
-  activity_type_id?: number
-  activity_types?: { id: number; name: string } | null
+  activity_types: { id: number; name: string } | null
 }
 
 interface DailyBriefResult {
@@ -31,8 +29,6 @@ interface DailyBriefResult {
   today_action: string
   insight: string
   tone: 'positive' | 'cautionary' | 'neutral'
-  taper_mode_active?: boolean
-  taper_phase?: string
 }
 
 function calculateACWR(activities: Activity[]): {
@@ -41,8 +37,6 @@ function calculateACWR(activities: Activity[]): {
   chronicLoad: number
   totalVolumeMi: number
   weeklyVolumeMi: number
-  peakWeeklyMi: number
-  cumulativeMi84d: number
   trainingTrend: string
 } {
   const now = new Date()
@@ -55,10 +49,6 @@ function calculateACWR(activities: Activity[]): {
   const last28 = activities.filter(a => {
     const d = new Date(a.activity_date)
     return (now.getTime() - d.getTime()) / msPerDay <= 28
-  })
-  const last84 = activities.filter(a => {
-    const d = new Date(a.activity_date)
-    return (now.getTime() - d.getTime()) / msPerDay <= 84
   })
 
   const toTSS = (a: Activity) => {
@@ -77,20 +67,6 @@ function calculateACWR(activities: Activity[]): {
   const KM_TO_MI = 0.621371
   const weeklyVolumeMi = last7.reduce((sum, a) => sum + (a.distance || 0) / 1000 * KM_TO_MI, 0)
   const totalVolumeMi = last28.reduce((sum, a) => sum + (a.distance || 0) / 1000 * KM_TO_MI, 0)
-  const cumulativeMi84d = last84.reduce((sum, a) => sum + (a.distance || 0) / 1000 * KM_TO_MI, 0)
-
-  // Find peak week in last 84 days
-  let peakWeeklyMi = 0
-  for (let weekStart = 0; weekStart < 12; weekStart++) {
-    const wStart = weekStart * 7
-    const wEnd = wStart + 7
-    const weekActs = last84.filter(a => {
-      const daysAgo = (now.getTime() - new Date(a.activity_date).getTime()) / msPerDay
-      return daysAgo > wStart && daysAgo <= wEnd
-    })
-    const weekMi = weekActs.reduce((sum, a) => sum + (a.distance || 0) / 1000 * KM_TO_MI, 0)
-    if (weekMi > peakWeeklyMi) peakWeeklyMi = weekMi
-  }
 
   const first14 = last28.filter(a => {
     const d = new Date(a.activity_date)
@@ -115,8 +91,6 @@ function calculateACWR(activities: Activity[]): {
     chronicLoad: Math.round(chronicLoad * 10) / 10,
     totalVolumeMi: Math.round(totalVolumeMi * 10) / 10,
     weeklyVolumeMi: Math.round(weeklyVolumeMi * 10) / 10,
-    peakWeeklyMi: Math.round(peakWeeklyMi * 10) / 10,
-    cumulativeMi84d: Math.round(cumulativeMi84d * 10) / 10,
     trainingTrend,
   }
 }
@@ -158,73 +132,6 @@ function buildLast5Snippet(activities: Activity[]): string {
     const date = new Date(a.activity_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     return `  ${date}: ${mi}mi @ ${pace}${hr} (${type})`
   }).join('\n')
-}
-
-// Twin Taper Mode: determine phase + voice
-function getTaperPhase(daysOut: number): {
-  phase: string
-  phaseName: string
-  taperModeActive: boolean
-  systemContext: string
-  responseGuidance: string
-} {
-  if (daysOut === 0) {
-    return {
-      phase: 'race_day',
-      phaseName: 'Race Day',
-      taperModeActive: true,
-      systemContext: 'This is RACE DAY. The twin\'s only job: witness and send off.',
-      responseGuidance: `brief: One line. No data. Just the moment. Example: "Today is the day your twin has been building toward. The data is done. Now you run."
-today_action: "Run your race. Trust what you've built."
-insight: Name the cumulative miles trained. That's the only number today.
-tone: positive`,
-    }
-  }
-  if (daysOut <= 6) {
-    return {
-      phase: 'race_week',
-      phaseName: 'Race Week',
-      taperModeActive: true,
-      systemContext: 'RACE WEEK (Twin Taper Mode — Phase 3). The twin goes quiet on analysis, loud on identity. One sentence + one data point per brief. No training recommendations. No pace targets. Only presence.',
-      responseGuidance: `brief: One sentence. Acknowledge the countdown. Reference total cumulative miles trained. Example: "Six days. You've built 287 miles of foundation for this. Nothing left to do but arrive."
-today_action: Max 10 words. Easy movement or full rest only.
-insight: One fact from their training history that proves their readiness.
-tone: positive`,
-    }
-  }
-  if (daysOut <= 13) {
-    return {
-      phase: 'taper_trust',
-      phaseName: 'Taper — Trust Phase',
-      taperModeActive: true,
-      systemContext: 'TAPER TRUST PHASE (Twin Taper Mode — Phase 2). The twin is the counterweight to taper madness. Volume is dropping intentionally. ACWR dropping is CORRECT. The twin must name the doubt before it lands.',
-      responseGuidance: `brief: Name what they're probably feeling (legs heavy, doubt creeping in, urge to run more). Then refute it with their actual data. ACWR dropping is the goal, not a warning sign. HRV and resting HR are the real signals now — reference them if available. Example: "Your legs will lie to you this week, Jack. Here's what your body is actually doing: ACWR at 0.82, right where it needs to be. Taper is working."
-today_action: Recovery-focused. Specific but gentle.
-insight: One data point that proves fitness is intact despite lower volume.
-tone: positive (taper is working, not a regression)`,
-    }
-  }
-  if (daysOut <= 21) {
-    return {
-      phase: 'taper_arriving',
-      phaseName: 'Taper — Arriving Phase',
-      taperModeActive: true,
-      systemContext: 'ARRIVING PHASE (Twin Taper Mode — Phase 1). The training build is complete. The twin\'s job: show the athlete the mountain they climbed. Not what to do next — what they\'ve already done.',
-      responseGuidance: `brief: Open with the cumulative picture. Total miles in the last 12 weeks. Peak week mileage. Long run progression. Then: "You're not building anymore. You're arriving." Make the fitness real and visible.
-today_action: Last quality work if scheduled; easy miles or rest otherwise.
-insight: Something from the 12-week arc they might not have seen — peak week, total volume, long run progression.
-tone: positive`,
-    }
-  }
-
-  // Not in taper window
-  return {
-    phase: 'normal',
-    phaseName: '',
-    taperModeActive: false,
-    systemContext: '',
-    responseGuidance: '',
-  }
 }
 
 Deno.serve(async (req) => {
@@ -277,29 +184,19 @@ Deno.serve(async (req) => {
       }
     }
 
+    const sixtyDaysAgo = new Date()
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60)
     const today = new Date().toISOString().split('T')[0]
-    const eightyfourDaysAgo = new Date()
-    eightyfourDaysAgo.setDate(eightyfourDaysAgo.getDate() - 84)
 
-    const [activitiesResult, athleteRaceResult, publicRaceResult, planResult] = await Promise.all([
+    const [activitiesResult, raceResult, planResult] = await Promise.all([
       supabase
         .from('activities')
-        .select('id, athlete_id, activity_date, distance, moving_time, average_speed, average_heart_rate, activity_type_id')
+        .select('*, activity_types(id, name)')
         .eq('athlete_id', athlete.id)
-        .gte('activity_date', eightyfourDaysAgo.toISOString().split('T')[0])
+        .gte('activity_date', sixtyDaysAgo.toISOString().split('T')[0])
         .order('activity_date', { ascending: false })
-        .limit(100),
+        .limit(60),
 
-      // Primary: athlete's personal race registrations (RunSignUp cache)
-      supabase
-        .from('athlete_races')
-        .select('race_name, race_date, city, state, runsignup_race_id')
-        .eq('athlete_id', athlete.id)
-        .gte('race_date', today)
-        .order('race_date', { ascending: true })
-        .limit(1),
-
-      // Fallback: public race directory
       supabase
         .from('runners')
         .select('races!inner(race_name, race_date, city, state, distance_km)')
@@ -317,56 +214,54 @@ Deno.serve(async (req) => {
     ])
 
     const activities = (activitiesResult.data ?? []) as Activity[]
-    const RUN_TYPES = new Set([1, 2, 3]) // Run activity type IDs — adjust to match your data
-    const runningActivities = activities.filter(a => !a.activity_type_id || a.activity_type_id <= 5)
+    const RUN_TYPES = new Set(['Run', 'Running', 'Trail Run', 'Trail Running', 'Treadmill', 'Treadmill Running', 'Virtual Run', 'Race'])
+    const runningActivities = activities.filter(a =>
+      !a.activity_types?.name || RUN_TYPES.has(a.activity_types.name)
+    )
 
     const loadMetrics = calculateACWR(runningActivities)
     const acwrState = getACWRState(loadMetrics.acwr)
     const last5 = buildLast5Snippet(runningActivities)
 
-    // Determine upcoming race — prefer athlete_races, fall back to public directory
-    let raceName = ''
-    let raceDate = ''
-    let goalTime = ''
-    let daysOut = 9999
+    let nextRaceText = 'No upcoming races registered'
+    let racePhaseText = ''
+    let racePhaseGuidance = ''
+    let racePhaseName = ''
+    const raceRow = raceResult.data?.[0] as { races: { race_name: string; race_date: string; city?: string; state?: string; distance_km?: number } } | undefined
+    if (raceRow?.races) {
+      const r = raceRow.races
+      const daysOut = Math.ceil(
+        (new Date(r.race_date + 'T00:00:00').getTime() - Date.now()) / 86400000
+      )
+      nextRaceText = `${r.race_name}${r.distance_km ? ` (${r.distance_km}km)` : ''} in ${daysOut} days${r.city ? `, ${r.city}` : ''}`
 
-    const personalRace = athleteRaceResult.data?.[0] as {
-      race_name: string
-      race_date: string
-      city?: string
-      state?: string
-      runsignup_race_id?: number
-    } | undefined
-
-    if (personalRace?.race_date) {
-      raceDate = personalRace.race_date
-      raceName = personalRace.race_name ?? 'Goal Race'
-      goalTime = ''
-      daysOut = Math.ceil((new Date(raceDate + 'T00:00:00').getTime() - Date.now()) / 86400000)
-    } else {
-      const publicRace = publicRaceResult.data?.[0] as {
-        races: { race_name: string; race_date: string; city?: string; state?: string; distance_km?: number }
-      } | undefined
-      if (publicRace?.races) {
-        raceDate = publicRace.races.race_date
-        raceName = publicRace.races.race_name
-        daysOut = Math.ceil((new Date(raceDate + 'T00:00:00').getTime() - Date.now()) / 86400000)
-      }
-    }
-
-    // Twin Taper Mode detection
-    const taperData = raceName ? getTaperPhase(daysOut) : {
-      phase: 'normal', phaseName: '', taperModeActive: false, systemContext: '', responseGuidance: ''
-    }
-
-    // Legacy phase text for non-taper phases
-    let legacyPhaseGuidance = ''
-    if (!taperData.taperModeActive && raceName) {
-      if (daysOut <= 42) {
-        legacyPhaseGuidance = 'Final Build phase. Last window for meaningful training stimulus. Make it count.'
+      // Compute race phase
+      if (daysOut === 0) {
+        racePhaseName = 'Race Day'
+        racePhaseGuidance = 'This is race day. Everything you have built comes out today.'
+      } else if (daysOut <= 7) {
+        racePhaseName = 'Race Week'
+        racePhaseGuidance = 'Race week protocol: sleep, carbs, easy legs only. Nothing they do this week adds fitness — it can only subtract it. Guard the legs.'
+      } else if (daysOut <= 14) {
+        racePhaseName = 'Taper'
+        racePhaseGuidance = 'Taper phase. Volume drops are intentional and correct. A lower ACWR right now is the goal, not a warning sign. Reassure them: they are not losing fitness, they are storing it.'
+      } else if (daysOut <= 28) {
+        racePhaseName = 'Peak'
+        racePhaseGuidance = 'Peak phase. Last race-pace quality work this week. No new aerobic fitness can be built in 2-4 weeks — execution of the plan matters now, not heroics.'
+      } else if (daysOut <= 42) {
+        racePhaseName = 'Final Build'
+        racePhaseGuidance = 'Final build phase. This is the last window for meaningful training stimulus. Long runs and quality work this week matter more than any other week left. Make it count.'
       } else {
-        legacyPhaseGuidance = 'Base Building phase. Aerobic foundation is the priority. Volume over intensity.'
+        racePhaseName = 'Base Building'
+        racePhaseGuidance = 'Base phase. Aerobic foundation is the priority. Volume over intensity. Consistency beats heroics.'
       }
+      racePhaseText = `${racePhaseName} phase — ${daysOut} days to ${r.race_name}`
+    }
+
+    let planText = 'No training plan on file'
+    const planRow = planResult.data?.[0]
+    if (planRow) {
+      planText = `Week of ${planRow.week_start_date}, planned ${planRow.total_planned_km ?? '?'}km`
     }
 
     const garmin = athlete.garmin_fitness_stats as Record<string, unknown> | null
@@ -384,48 +279,26 @@ Deno.serve(async (req) => {
       if (lines.length > 0) garminSection = `\nGarmin Device Data:\n${lines.join('\n')}`
     }
 
-    // Build system prompt
-    let systemPrompt = `You are the athlete's digital running twin — a deeply personalized AI that has studied their full training history. You are not a coach. You are a mirror. You reflect what the data shows about who they are becoming as an athlete.
+    const systemPrompt = `You are the athlete's digital running twin — a deeply personalized AI that has studied their full training history. You are not a coach. You are a mirror. You reflect what the data shows about who they are becoming as an athlete.
 
 Your voice: direct, second person, declarative. Like a training partner who has been with them for every run and knows the numbers cold. No cheerleading. No judgment. When the data says something good, say it. When the data says something concerning, say it straight.
 
-ACWR is your primary signal for training state:
+ACWR is your primary signal for training state. Use this language system exactly:
 - ACWR < 0.8: "You're fading. Your body has built capacity you're not using."
 - ACWR 0.8–1.0: "You're in maintenance. Solid base, not building."
 - ACWR 1.0–1.3: "You're in the flow. Load and capacity are matched."
 - ACWR 1.3–1.5: "You're flirting with the edge. Pull back or pay later."
 - ACWR > 1.5: "You're in the red. This is where injuries happen."
 
-Current ACWR state: ${acwrState.state} (${loadMetrics.acwr})
-Reference voice: "${acwrState.voice}"`
+Current ACWR state for this athlete: ${acwrState.state} (${loadMetrics.acwr})
+Reference voice for this state: "${acwrState.voice}"
 
-    if (taperData.taperModeActive) {
-      systemPrompt += `
+${racePhaseText ? `Race phase context: The athlete is in ${racePhaseText}. Your brief MUST reflect this phase. ${racePhaseGuidance}
 
-==== TWIN TAPER MODE ACTIVE ====
-${taperData.systemContext}
-
-TAPER MODE VOICE RULES:
-- You are not a coach right now. You are an evidence keeper and witness.
-- The standard ACWR warning voice DOES NOT apply if athlete is tapering intentionally.
-- Volume dropping is correct and expected. Name this.
-- Doubt is coming (or already here). Get ahead of it with data.
-- Your job: make the fitness feel real. Show them what they've built.
-- The brand promise is most true right now: "Your data knows what your doubts don't."
-
-Cumulative data for context:
-- 12-week mileage: ${loadMetrics.cumulativeMi84d}mi
-- Peak training week: ${loadMetrics.peakWeeklyMi}mi
-- This week so far: ${loadMetrics.weeklyVolumeMi}mi
-- Race: ${raceName} — ${daysOut} days away
-${goalTime ? `- Goal time: ${goalTime}` : ''}
-====`
-    } else if (raceName) {
-      systemPrompt += `\n\nRace context: ${raceName} in ${daysOut} days. ${legacyPhaseGuidance}`
-    }
-
-    const planRow = planResult.data?.[0]
-    const planText = planRow ? `Week of ${planRow.week_start_date}, planned ${planRow.total_planned_km ?? '?'}km` : 'No training plan on file'
+During taper/race week: ACWR dropping is correct and expected — reframe the ACWR state with this in mind. Do NOT say a lower ACWR is alarming if the athlete is tapering.
+During final build/peak: Urgency is real. Name the phase. These weeks matter more than any others.
+` : ''}
+Every sentence must reference actual numbers. Never give generic advice. If Garmin data is present, it overrides estimated values — those numbers are live from the device.`
 
     const userPrompt = `Generate a daily training brief for ${athlete.first_name ?? 'the athlete'}.
 
@@ -434,33 +307,29 @@ Training Load (last 28 days):
 - Acute load (7d): ${loadMetrics.acuteLoad}
 - Chronic load (28d avg): ${loadMetrics.chronicLoad}
 - This week's volume: ${loadMetrics.weeklyVolumeMi}mi
-- 28-day total: ${loadMetrics.totalVolumeMi}mi
-- 12-week cumulative: ${loadMetrics.cumulativeMi84d}mi
-- Peak week (12w): ${loadMetrics.peakWeeklyMi}mi
+- 28-day total: ${loadMetrics.totalVolumeMi}mi (avg ${(loadMetrics.totalVolumeMi / 4).toFixed(1)}mi/week)
 - Training trend: ${loadMetrics.trainingTrend}
 ${garminSection}
-Last 5 activities:
-${last5 || '  No recent activities'}
+Last 5 runs:
+${last5 || '  No recent runs'}
 
-${raceName ? `Upcoming race: ${raceName} — ${daysOut} days out${goalTime ? ` (goal: ${goalTime})` : ''}` : 'No upcoming races registered'}
+Next race: ${nextRaceText}${racePhaseText ? `
+Race phase: ${racePhaseText}
+Phase guidance: ${racePhaseGuidance}` : ''}
 Training plan: ${planText}
 
-${taperData.taperModeActive ? `TAPER MODE ACTIVE — ${taperData.phaseName}
-Response format guidance:
-${taperData.responseGuidance}
-
-` : ''}Respond with ONLY valid JSON:
+Respond with ONLY valid JSON:
 {
-  "brief": "2-4 sentences. Must reference actual numbers. No generic advice.",
-  "today_action": "One specific concrete action for today. Max 15 words.",
-  "insight": "One data pattern worth noting. Max 20 words. Must cite a number.",
-  "tone": "positive | cautionary | neutral"
+  "brief": "2-4 sentences. Must reference ACWR state using the voice system above. Must include at least 2 specific numbers. No generic advice.",
+  "today_action": "One specific concrete action for today. Max 15 words. Must be specific (e.g. '45min easy, HR under 140' not 'rest and recover').",
+  "insight": "One data pattern they may not have noticed. Max 20 words. Must cite a number.",
+  "tone": "cautionary if ACWR > 1.3 | positive if ACWR 0.8–1.3 and trend is ramping_up | neutral otherwise"
 }
 
 Rules:
 - Never use: 'stay hydrated', 'listen to your body', 'recovery is important', 'great job'
 - Always use their name in the brief
-- Tone must match context (taper mode = positive unless injury risk)`
+- Tone must match ACWR state exactly`
 
     const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -491,13 +360,6 @@ Rules:
     }
 
     const result: DailyBriefResult = JSON.parse(jsonText)
-
-    // Attach taper mode metadata
-    if (taperData.taperModeActive) {
-      result.taper_mode_active = true
-      result.taper_phase = taperData.phaseName
-    }
-
     const generatedAt = new Date().toISOString()
 
     await supabase
