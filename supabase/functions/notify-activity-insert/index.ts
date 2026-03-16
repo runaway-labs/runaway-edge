@@ -1,7 +1,7 @@
 // notify-activity-insert: Database webhook — fires when a new activity is inserted.
 // Sends an APNs push notification to the athlete's device.
 
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 import { sendPush } from "../_shared/apns.ts";
 
 const corsHeaders = {
