@@ -490,7 +490,12 @@ Rules:
       jsonText = jsonText.split('```')[1].split('```')[0].trim()
     }
 
-    const result: DailyBriefResult = JSON.parse(jsonText)
+    let result: DailyBriefResult
+    try {
+      result = JSON.parse(jsonText)
+    } catch {
+      throw new Error('Failed to parse AI brief response')
+    }
 
     // Attach taper mode metadata
     if (taperData.taperModeActive) {

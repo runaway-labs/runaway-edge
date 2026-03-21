@@ -158,14 +158,16 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('OAuth callback error:', error)
-    
+
+    const userFacingError = 'Connection failed. Please try again.'
+
     if (webRedirectUrl) {
       return new Response(null, {
         status: 302,
-        headers: { ...corsHeaders, 'Location': `${webRedirectUrl}?strava=error&error=${encodeURIComponent(error.message)}` }
+        headers: { ...corsHeaders, 'Location': `${webRedirectUrl}?strava=error&error=${encodeURIComponent(userFacingError)}` }
       })
     } else {
-      const errorDeepLink = `runaway://strava-connected?success=false&error=${encodeURIComponent(error.message)}`
+      const errorDeepLink = `runaway://strava-connected?success=false&error=${encodeURIComponent(userFacingError)}`
       return new Response(null, {
         status: 302,
         headers: { ...corsHeaders, 'Location': errorDeepLink }

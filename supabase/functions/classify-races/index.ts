@@ -103,7 +103,12 @@ async function classifyBatch(entries: DirectoryRow[]): Promise<ClassificationRes
     throw new Error("Anthropic API returned empty content");
   }
 
-  const parsed = JSON.parse(textContent) as ClassificationResult[];
+  let parsed: ClassificationResult[]
+  try {
+    parsed = JSON.parse(textContent) as ClassificationResult[]
+  } catch {
+    throw new Error('Failed to parse AI classification response')
+  }
   return parsed;
 }
 

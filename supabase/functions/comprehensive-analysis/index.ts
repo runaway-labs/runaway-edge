@@ -768,7 +768,12 @@ Return ONLY valid JSON:
     jsonText = jsonText.split('```')[1].split('```')[0].trim()
   }
 
-  const analysis = JSON.parse(jsonText)
+  let analysis: Record<string, unknown>
+  try {
+    analysis = JSON.parse(jsonText)
+  } catch {
+    throw new Error('Failed to parse AI analysis response')
+  }
 
   return {
     vo2maxEstimate: {
