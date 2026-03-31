@@ -72,6 +72,19 @@ Deno.serve(async (req) => {
     });
 
     console.log("✅ APNs notification sent");
+
+    // Fire-and-forget: check for breakthrough milestones without blocking response
+    const breakthroughUrl =
+      `${Deno.env.get("SUPABASE_URL")}/functions/v1/breakthrough-milestones`;
+    fetch(breakthroughUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: JSON.stringify({ athlete_id: record.athlete_id, activity_id: record.id }),
+    }).catch((err) => console.error("❌ Breakthrough trigger failed:", err));
+
     return new Response(JSON.stringify({ success: true, body }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
