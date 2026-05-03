@@ -37,6 +37,8 @@ runaway-edge/
 | `daily-research-brief` | Daily personalized research summary |
 | `activity-observations` | Twin observation tracking per activity |
 | `micro-wins` | Small win detection from activity data |
+| `pre-run-brief` | Personalized audio coaching cues for an upcoming run (numeric-validated) |
+| `backfill-training-zones` | Compute and write 5-zone HR model from activity history (FR-8 dependency for `pre-run-brief`) |
 
 ### Integrations
 | Function | Description |
