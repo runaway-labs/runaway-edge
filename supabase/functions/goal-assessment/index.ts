@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
 
     // Get the goal
     const { data: goal } = await supabase
-      .from('goals')
+      .from('running_goals')
       .select('*')
       .eq('id', goal_id)
       .eq('athlete_id', athlete.id)
@@ -108,7 +108,7 @@ Rules:
 - 3 insights total, each with a title (max 8 words) and detail (1-2 sentences)
 - Second person voice. Reference actual numbers.
 - No generic advice. No cheerleading. Be honest about whether they'll make it.
-- Do not wrap in markdown or add any text outside the JSON.`
+- Do not wrap in markdown or add any text outside the JSON.${goal?.goal_framing ? `\n\nThis athlete's goal framing: "${goal.goal_framing}".\nFrame assessment in identity terms, not deficit terms.` : ''}`
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
