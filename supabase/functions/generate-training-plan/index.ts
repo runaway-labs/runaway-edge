@@ -88,6 +88,16 @@ Deno.serve(async (req) => {
       console.error('Error fetching athlete:', athleteError)
     }
 
+    // Fetch Adlerian profile
+    const { data: aiProfileData } = await supabaseAdmin
+      .from('athlete_ai_profiles')
+      .select('core_memory')
+      .eq('athlete_id', athlete_id)
+      .maybeSingle()
+
+    const planCoreMemory = (aiProfileData?.core_memory as Record<string, any>) ?? {}
+    const planAdlerian = planCoreMemory.adlerian_profile ?? null
+
     // Get recent activities (last 4 weeks) to understand training patterns
     const fourWeeksAgo = new Date(week_start_date)
     fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28)
@@ -165,7 +175,7 @@ Key training principles to follow:
 4. RECOVERY: Include at least 1-2 easy/recovery days
 5. STRENGTH: 2-3 strength sessions per week, not on hard run days
 6. VARIETY: Mix different workout types to prevent boredom and overuse
-7. GOAL ALIGNMENT: Prioritize workout types that match the athlete's goal`,
+7. GOAL ALIGNMENT: Prioritize workout types that match the athlete's goal${planAdlerian ? `\n\n[RUNNER IDENTITY]\nRunner identity: ${planAdlerian.runner_identity}. Core values: ${planAdlerian.core_values?.join(', ') ?? ''}.\nPlan description and weekly summaries should reinforce identity, not just list mileage.` : ''}`,
         messages: [
           {
             role: 'user',
