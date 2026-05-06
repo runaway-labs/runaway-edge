@@ -261,7 +261,7 @@ Deno.serve(async (req) => {
       milestone_key: m.key,
       label: m.label,
       description: m.description,
-      achieved: false,
+      earned: false,
     }))
 
     const { error: milestoneError } = await supabaseAdmin
