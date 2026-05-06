@@ -65,6 +65,16 @@ Deno.serve(async (req) => {
       console.error('Error fetching athlete:', athleteError)
     }
 
+    // Fetch Adlerian profile from core_memory
+    const { data: aiProfile } = await supabaseAdmin
+      .from('athlete_ai_profiles')
+      .select('core_memory')
+      .eq('athlete_id', athlete_id)
+      .maybeSingle()
+
+    const coreMemory = (aiProfile?.core_memory as Record<string, any>) ?? {}
+    const adlerianProfile = coreMemory.adlerian_profile ?? null
+
     // Build context for Claude
     const contextParts = []
 
@@ -99,6 +109,10 @@ Deno.serve(async (req) => {
 
     const context = contextParts.join('\n')
 
+    const adlerianBlock = adlerianProfile
+      ? `\n\n[COACHING VOICE]\nThis athlete's identity: ${adlerianProfile.runner_identity}. Why they run: ${adlerianProfile.why_i_run}.\nLead with encouragement. Name their identity when relevant.\nNever open with performance critique or goal comparison.`
+      : ''
+
     // Call Anthropic API
     const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -113,7 +127,7 @@ Deno.serve(async (req) => {
         system: `You are an expert running coach. You provide personalized training advice based on the athlete's activity history. Be supportive, concise, and data-driven. Use the context provided to give specific, actionable advice.
 
 Context about the athlete:
-${context}`,
+${context}${adlerianBlock}`,
         messages: [
           {
             role: 'user',
