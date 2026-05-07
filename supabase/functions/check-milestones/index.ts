@@ -35,11 +35,12 @@ function evaluateMilestones(
     .filter((a): a is Activity & { activity_date: string } => a.activity_date != null)
     .sort((a, b) => a.activity_date.localeCompare(b.activity_date))
 
-  if (sorted.length === 0) return newlyEarned
-
-  if (unearnedKeys.has('first_run')) {
+  // first_run uses the raw activities count (before date filtering)
+  if (unearnedKeys.has('first_run') && activities.length >= 1) {
     newlyEarned.push('first_run')
   }
+
+  if (sorted.length === 0) return newlyEarned
 
   if (unearnedKeys.has('distance_5k')) {
     if (sorted.some((a) => (a.distance ?? 0) >= 5000)) {
@@ -76,6 +77,14 @@ function evaluateMilestones(
     const weekMap: Record<string, boolean> = {}
     for (const w of weeks) weekMap[w] = true
 
+    // Returns the number of ISO weeks in a year (52 or 53)
+    function isoWeeksInYear(y: number): number {
+      // A year has 53 weeks if Jan 1 or Dec 31 is a Thursday
+      const jan1 = new Date(Date.UTC(y, 0, 1)).getUTCDay()
+      const dec31 = new Date(Date.UTC(y, 11, 31)).getUTCDay()
+      return (jan1 === 4 || dec31 === 4) ? 53 : 52
+    }
+
     outer: for (let i = 0; i < weeks.length; i++) {
       const [yearStr, wStr] = weeks[i].split('-W')
       let year = parseInt(yearStr)
@@ -83,7 +92,7 @@ function evaluateMilestones(
       let consecutive = 1
       for (let j = 1; j < 4; j++) {
         week++
-        if (week > 52) { week = 1; year++ }
+        if (week > isoWeeksInYear(year)) { week = 1; year++ }
         const key = `${year}-W${String(week).padStart(2, '0')}`
         if (!weekMap[key]) continue outer
         consecutive++
