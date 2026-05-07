@@ -3,6 +3,10 @@ import { corsHeaders } from '../_shared/cors.ts'
 
 const RUNNING_SPORT_TYPES = ['Run', 'TrailRun', 'VirtualRun']
 
+const DISTANCE_5K_METERS = 5000
+const DISTANCE_HALF_MARATHON_METERS = 21097
+const MS_PER_DAY = 86_400_000
+
 type Activity = {
   distance: number | null
   activity_date: string | null
@@ -19,10 +23,16 @@ function isoWeekKey(dateStr: string): string {
   const year = thursday.getUTCFullYear()
   const startOfYear = new Date(Date.UTC(year, 0, 4))
   const weekNum = Math.round(
-    ((thursday.getTime() - startOfYear.getTime()) / 86400000 -
+    ((thursday.getTime() - startOfYear.getTime()) / MS_PER_DAY -
       3 + ((startOfYear.getUTCDay() + 6) % 7)) / 7
   ) + 1
   return `${year}-W${String(weekNum).padStart(2, '0')}`
+}
+
+function isoWeeksInYear(y: number): number {
+  const jan1 = new Date(Date.UTC(y, 0, 1)).getUTCDay()
+  const dec31 = new Date(Date.UTC(y, 11, 31)).getUTCDay()
+  return (jan1 === 4 || dec31 === 4) ? 53 : 52
 }
 
 function evaluateMilestones(
@@ -43,13 +53,13 @@ function evaluateMilestones(
   if (sorted.length === 0) return newlyEarned
 
   if (unearnedKeys.has('distance_5k')) {
-    if (sorted.some((a) => (a.distance ?? 0) >= 5000)) {
+    if (sorted.some((a) => (a.distance ?? 0) >= DISTANCE_5K_METERS)) {
       newlyEarned.push('distance_5k')
     }
   }
 
   if (unearnedKeys.has('distance_half')) {
-    if (sorted.some((a) => (a.distance ?? 0) >= 21097)) {
+    if (sorted.some((a) => (a.distance ?? 0) >= DISTANCE_HALF_MARATHON_METERS)) {
       newlyEarned.push('distance_half')
     }
   }
@@ -61,7 +71,7 @@ function evaluateMilestones(
     for (let i = 1; i < days.length; i++) {
       const prev = new Date(days[i - 1])
       const curr = new Date(days[i])
-      const diffDays = Math.round((curr.getTime() - prev.getTime()) / 86400000)
+      const diffDays = Math.round((curr.getTime() - prev.getTime()) / MS_PER_DAY)
       if (diffDays === 1) {
         streak++
         if (streak >= 7) { newlyEarned.push('streak_7'); break }
@@ -76,14 +86,6 @@ function evaluateMilestones(
     const weeks = Array.from(weekSet).sort()
     const weekMap: Record<string, boolean> = {}
     for (const w of weeks) weekMap[w] = true
-
-    // Returns the number of ISO weeks in a year (52 or 53)
-    function isoWeeksInYear(y: number): number {
-      // A year has 53 weeks if Jan 1 or Dec 31 is a Thursday
-      const jan1 = new Date(Date.UTC(y, 0, 1)).getUTCDay()
-      const dec31 = new Date(Date.UTC(y, 11, 31)).getUTCDay()
-      return (jan1 === 4 || dec31 === 4) ? 53 : 52
-    }
 
     outer: for (let i = 0; i < weeks.length; i++) {
       const [yearStr, wStr] = weeks[i].split('-W')
@@ -105,7 +107,7 @@ function evaluateMilestones(
     for (let i = 1; i < sorted.length; i++) {
       const prev = new Date(sorted[i - 1].activity_date)
       const curr = new Date(sorted[i].activity_date)
-      const gapDays = (curr.getTime() - prev.getTime()) / 86400000
+      const gapDays = (curr.getTime() - prev.getTime()) / MS_PER_DAY
       if (gapDays >= 14) {
         newlyEarned.push('comeback')
         break
@@ -122,6 +124,7 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // activity_id is included in the request for log traceability; detection uses full history
     const { athlete_id, activity_id } = await req.json()
 
     if (!athlete_id) {
@@ -176,6 +179,7 @@ Deno.serve(async (req) => {
 
     const newlyEarned = evaluateMilestones(activities ?? [], unearnedKeys)
 
+    const confirmedEarned: string[] = []
     if (newlyEarned.length > 0) {
       const now = new Date().toISOString()
       for (const key of newlyEarned) {
@@ -187,20 +191,22 @@ Deno.serve(async (req) => {
           .eq('earned', false)
         if (updateError) {
           console.error(`Error marking milestone ${key}:`, updateError)
+        } else {
+          confirmedEarned.push(key)
         }
       }
     }
 
-    console.log('check-milestones complete:', { athlete_id, activity_id, newly_earned: newlyEarned })
+    console.log('check-milestones complete:', { athlete_id, activity_id, newly_earned: confirmedEarned })
 
     return new Response(
-      JSON.stringify({ newly_earned: newlyEarned }),
+      JSON.stringify({ newly_earned: confirmedEarned }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error) {
     console.error('Error in check-milestones:', error)
     return new Response(
-      JSON.stringify({ error: 'Internal error' }),
+      JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
