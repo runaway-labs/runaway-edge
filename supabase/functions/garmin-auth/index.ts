@@ -1,140 +1,129 @@
 // Supabase Edge Function: garmin-auth
-// Initiate Garmin OAuth 2.0 PKCE flow
+// Initiate a Garmin OAuth 2.0 PKCE flow for the authenticated athlete.
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { corsHeaders } from '../_shared/cors.ts'
+import { corsHeaders } from "../_shared/cors.ts";
+import { createOAuthInitiationHandler } from "../_shared/oauth-handler.ts";
+import { createOAuthState, hashOAuthState } from "../_shared/oauth-state.ts";
+import { HttpError, requireUser } from "../_shared/require-user.ts";
+import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
 
-// Garmin uses "Consumer Key" terminology but it's the same as Client ID for OAuth 2.0
-const GARMIN_CLIENT_ID = Deno.env.get('GARMIN_CONSUMER_KEY')?.trim()
-const GARMIN_CLIENT_SECRET = Deno.env.get('GARMIN_CONSUMER_SECRET')?.trim()
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')?.trim()
+const WEB_REDIRECT_ORIGINS = new Set([
+  "http://localhost:3000",
+  "https://localhost:3000",
+  "https://runaway-web-203308554831.us-central1.run.app",
+]);
 
-// OAuth 2.0 PKCE helper functions
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 function generateCodeVerifier(): string {
-  const array = new Uint8Array(32)
-  crypto.getRandomValues(array)
-  return base64UrlEncode(array)
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
 }
 
 async function generateCodeChallenge(verifier: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(verifier)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return base64UrlEncode(new Uint8Array(digest))
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return base64UrlEncode(new Uint8Array(digest));
 }
 
-function base64UrlEncode(buffer: Uint8Array): string {
-  let binary = ''
-  for (const byte of buffer) {
-    binary += String.fromCharCode(byte)
-  }
-  return btoa(binary)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 }
 
-function generateState(): string {
-  const array = new Uint8Array(16)
-  crypto.getRandomValues(array)
-  return base64UrlEncode(array)
-}
-
-Deno.serve(async (req) => {
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+function safeRedirect(rawRedirect: unknown): string {
+  const fallback = "runaway://garmin-connected";
+  if (rawRedirect == null || rawRedirect === "") return fallback;
+  if (typeof rawRedirect !== "string") {
+    throw new HttpError(400, "INVALID_REDIRECT_URL", "The redirect URL is not allowed");
   }
 
   try {
-    // Get the auth_user_id from the request (to link the connection later)
-    let authUserId: string | null = null
-
-    let webRedirectUrl: string | null = null
-
-    if (req.method === 'POST') {
-      const body = await req.json()
-      authUserId = body.auth_user_id || null
-      webRedirectUrl = body.web_redirect_url || null
-    } else {
-      const url = new URL(req.url)
-      authUserId = url.searchParams.get('auth_user_id')
-      webRedirectUrl = url.searchParams.get('web_redirect_url')
-    }
-
-    console.log('Initiating Garmin OAuth 2.0 PKCE for user:', authUserId)
-
-    if (!GARMIN_CLIENT_ID || !GARMIN_CLIENT_SECRET) {
-      throw new Error('Garmin API credentials not configured')
-    }
-
-    // Generate PKCE values
-    const codeVerifier = generateCodeVerifier()
-    const codeChallenge = await generateCodeChallenge(codeVerifier)
-    const state = generateState()
-
-    // Callback URL
-    const redirectUri = `${SUPABASE_URL}/functions/v1/garmin-callback`
-
-    // Store PKCE verifier and state for callback validation
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
-
-    const { error: insertError } = await supabaseAdmin
-      .from('garmin_oauth_tokens')
-      .upsert({
-        oauth_token: state, // Use state as the key
-        token_secret: codeVerifier, // Store code_verifier in token_secret field
-        auth_user_id: authUserId,
-        web_redirect_url: webRedirectUrl, // Store web redirect URL for callback
-        created_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10 min expiry
-      }, { onConflict: 'oauth_token' })
-
-    if (insertError) {
-      console.error('Error storing PKCE data:', insertError)
-    }
-
-    // Build the authorization URL for OAuth 2.0 PKCE
-    // Use the correct Garmin authorization endpoint
-    const authParams = new URLSearchParams({
-      client_id: GARMIN_CLIENT_ID,
-      response_type: 'code',
-      redirect_uri: redirectUri,
-      state: state,
-      code_challenge: codeChallenge,
-      code_challenge_method: 'S256'
-    })
-
-    // Garmin's OAuth 2.0 authorization endpoint (from official PKCE spec)
-    const authorizationUrl = `https://connect.garmin.com/oauth2Confirm?${authParams.toString()}`
-
-    console.log('Authorization URL generated:', authorizationUrl)
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        authorization_url: authorizationUrl,
-        oauth_token: state // Return state for reference
-      }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
-    )
-
-  } catch (error) {
-    console.error('Garmin auth initiation error:', error)
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: error.message
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
-    )
+    const redirect = new URL(rawRedirect);
+    if (redirect.protocol === "runaway:" && redirect.hostname === "garmin-connected") return fallback;
+    if (WEB_REDIRECT_ORIGINS.has(redirect.origin)) return redirect.toString();
+  } catch {
+    // Normalize malformed and unapproved targets to the same safe error.
   }
-})
+
+  throw new HttpError(400, "INVALID_REDIRECT_URL", "The redirect URL is not allowed");
+}
+
+async function requestedRedirect(req: Request): Promise<unknown> {
+  if (req.method === "GET") return new URL(req.url).searchParams.get("web_redirect_url");
+
+  try {
+    const body = await req.json();
+    if (body === null || typeof body !== "object" || Array.isArray(body)) throw new Error();
+    return (body as Record<string, unknown>).web_redirect_url;
+  } catch {
+    throw new HttpError(400, "INVALID_REQUEST", "A valid JSON request body is required");
+  }
+}
+
+Deno.serve(createOAuthInitiationHandler({
+  requireUser,
+  begin: async (req, user) => {
+    if (Deno.env.get("GARMIN_OAUTH_INITIATION_BLOCKED")?.trim().toLowerCase() === "true") {
+      throw new HttpError(503, "GARMIN_OAUTH_INITIATION_BLOCKED", "Garmin connection initiation is temporarily unavailable");
+    }
+    const redirectUrl = safeRedirect(await requestedRedirect(req));
+    const clientId = Deno.env.get("GARMIN_CONSUMER_KEY")?.trim();
+    const clientSecret = Deno.env.get("GARMIN_CONSUMER_SECRET")?.trim();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim();
+    if (!clientId || !clientSecret || !supabaseUrl) throw new Error("GARMIN_AUTH_NOT_CONFIGURED");
+
+    const codeVerifier = generateCodeVerifier();
+    const codeChallenge = await generateCodeChallenge(codeVerifier);
+    const state = await createOAuthState({
+      provider: "garmin",
+      authUserId: user.authUserId,
+      athleteId: user.athleteId,
+      redirectUrl,
+    });
+    const stateHash = await hashOAuthState(state);
+    const { error: verifierError } = await getSupabaseAdmin()
+      .from("garmin_oauth_tokens")
+      .upsert({
+        oauth_token: stateHash,
+        token_secret: codeVerifier,
+        auth_user_id: user.authUserId,
+        web_redirect_url: null,
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      }, { onConflict: "oauth_token" });
+    if (verifierError) throw new Error("GARMIN_PKCE_STORAGE_FAILED");
+
+    const authorizationUrl = new URL("https://connect.garmin.com/oauth2Confirm");
+    authorizationUrl.search = new URLSearchParams({
+      client_id: clientId,
+      response_type: "code",
+      redirect_uri: `${supabaseUrl}/functions/v1/garmin-callback`,
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+    }).toString();
+
+    return jsonResponse({
+      success: true,
+      authorization_url: authorizationUrl.toString(),
+      oauth_token: state,
+    });
+  },
+  errorResponse: (error) => {
+    if (error instanceof HttpError) {
+      return jsonResponse({ success: false, error: error.message, code: error.code }, error.status);
+    }
+    console.error("GARMIN_AUTH_INITIATION_FAILED");
+    return jsonResponse({ success: false, error: "Unable to start Garmin connection" }, 500);
+  },
+  methodNotAllowedResponse: () =>
+    jsonResponse({ success: false, error: "Method not allowed" }, 405),
+  optionsResponse: () => new Response(null, { headers: corsHeaders }),
+}));

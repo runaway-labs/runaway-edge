@@ -20,8 +20,8 @@ runaway-edge/
     │   │   ├── twilio.ts
     │   │   ├── weather-api.ts
     │   │   └── aqi-api.ts
-    │   └── [37 functions]        # See function inventory below
-    └── migrations/               # 17 PostgreSQL migrations
+    │   └── [function directories] # Derived from supabase/functions/
+    └── migrations/               # PostgreSQL migrations (derived from this directory)
 ```
 
 ## Function Inventory
@@ -93,7 +93,6 @@ Encouragement-first coaching surfaces backed by an identity model. See `agent/me
 | Function | Description |
 |----------|-------------|
 | `max-data` | Fetch max data values for an athlete |
-| `run-ddl` | Execute DDL statements (admin) |
 | `check-webhook-config` | Verify webhook configuration |
 | `import-runners` | Bulk runner import |
 | `check-hooks` / `check-hooks2` | Hook validation |
@@ -189,6 +188,34 @@ supabase functions deploy
 ```
 
 CI auto-deploys all functions on push to `main` via GitHub Actions (`.github/workflows/deploy-functions.yml`) with Discord build notifications.
+
+### Production deployment containment (Task 6)
+
+`scripts/audit-deployment.ts` is the deployment source of truth for all 55
+functions observed on 2026-08-24. Every slug is classified as
+`expected-active`, `approved-retirement`, or `unknown-blocker`. The audit is
+fail-closed on partial inventory, local source/config additions, missing bundle
+dependencies, bundle hash drift, JWT drift, migration/schema assumptions, and
+cron/trigger drift.
+
+The deployment workflow downloads each live bundle separately and runs the
+`deploy` baseline gate before deploying without a global JWT override. After
+deployment, `pre` requires all active bundles and JWT settings to match while
+permitting exactly the archived retirement set. Task 8 may then delete only
+those 13 slugs and must run `post`, which requires them absent. Read-only Task 8
+review resolved the former unknown slugs `twin-engine`, `ultratracker`, and
+`upload-race-course` as approved retirements, leaving no unknown blocker.
+
+Recoverable reviewed sources for every approved retirement are under
+`supabase/retired-functions/`. These archives are outside the active deployment
+directory, are retired and non-runnable, and are checked for embedded credential
+literals and hash integrity. They are recovery evidence only: restoration is
+blocked pending a dedicated security review, with explicit safe authentication
+and authorization required before any archived utility could become active.
+
+The production rollout sequence, dry-run evidence requirements, and rollback
+gates are documented in
+`docs/security/production-security-containment-runbook.md`.
 
 ## Import Pattern
 

@@ -1,0 +1,161 @@
+{
+  "generated_at": "2026-08-24T20:33:33.303Z",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "edge_head_before_task": "ae54bbc663f60a889dc27a9adc936777a2f38cbe",
+  "production_mutations": [],
+  "live_function_inventory": {
+    "read_only_list_succeeded": true,
+    "active_count": 55,
+    "classification": {
+      "expected_active": 42,
+      "approved_retirement": 13,
+      "unknown_blocker": 0
+    },
+    "canonical_hash_count": 55,
+    "secret_scan_failure_count": 0,
+    "source": "Supabase get_edge_function plus list_edge_functions (read-only)",
+    "artifact": "task-8-read-only-preflight-artifacts/live-functions-complete.json"
+  },
+  "reviewed_missing_baselines": [
+    {
+      "slug": "backfill-splits",
+      "file_count": 2,
+      "bundle_sha256": "250149d08c7f277231b8d0c43efe08d8ea7f244398562511c04447602eb70ff7",
+      "secret_scan": "passed"
+    },
+    {
+      "slug": "identity-profile",
+      "file_count": 3,
+      "bundle_sha256": "22c65dc21db97fbfc17a7dee549d65dfa83801c1cbc13f340be9d5b7259a09b4",
+      "secret_scan": "passed"
+    },
+    {
+      "slug": "feedback-workout",
+      "file_count": 3,
+      "bundle_sha256": "1bc3a324102f63039d3590a08d0c0ba5908aafc7c65f711dc8908c7ee3506723",
+      "secret_scan": "passed"
+    },
+    {
+      "slug": "check-milestones",
+      "file_count": 3,
+      "bundle_sha256": "77eedb8acedf8464d301dfc391ddd2c255be43e09e3d275b3aae962be9d2c231",
+      "secret_scan": "passed"
+    },
+    {
+      "slug": "generate-run-cues",
+      "file_count": 3,
+      "bundle_sha256": "c980d0bbabd4710161372cdd03c4172f5a72cd771508c058feafb11a47ca1f5e",
+      "secret_scan": "passed"
+    }
+  ],
+  "new_retirement_archives": [
+    {
+      "slug": "twin-engine",
+      "file_count": 2,
+      "bundle_sha256": "4c3556a83fd61ef194a6e5095cef85b85e313d0d30de4de6586ce6acf63a2894",
+      "verify_jwt": false,
+      "secret_scan": "passed",
+      "restore_policy": "blocked-pending-security-review"
+    },
+    {
+      "slug": "ultratracker",
+      "file_count": 2,
+      "bundle_sha256": "cd52753fd39cc6211da32bf3e9e83f4a8973913df19f78b07e8803472354b556",
+      "verify_jwt": true,
+      "secret_scan": "passed",
+      "restore_policy": "blocked-pending-security-review"
+    },
+    {
+      "slug": "upload-race-course",
+      "file_count": 3,
+      "bundle_sha256": "382e0a2b01bbe0f40dcdc6e6210281e07facfc06688fe60c5174f4c3ac50df5e",
+      "verify_jwt": true,
+      "secret_scan": "passed",
+      "restore_policy": "blocked-pending-security-review"
+    }
+  ],
+  "temporary_complete_bundle_downloads": {
+    "complete_count": 55,
+    "required_review_set_complete": true,
+    "full_audit_set_complete": true,
+    "missing_count": 0,
+    "missing": []
+  },
+  "local_checks": {
+    "audit_unit_tests": "20 passed; 0 failed",
+    "npx_deno": "not run: npm offline cache miss ENOTCACHED",
+    "supabase_local_reset": "not run: Docker daemon remained unresponsive",
+    "pgtap": "not run: local Supabase database unavailable",
+    "ios_xcodebuild": "not run at checkpoint: CoreSimulatorService unavailable in sandbox"
+  },
+  "dry_run_audits": {
+    "deploy": {
+      "status": "expected-failure",
+      "error_count": 46,
+      "artifact": "task-8-read-only-preflight-artifacts/audit-deploy.json"
+    },
+    "pre": {
+      "status": "expected-failure",
+      "error_count": 111,
+      "artifact": "task-8-read-only-preflight-artifacts/audit-pre.json"
+    }
+  },
+  "status": "preflight-blocked-current-production",
+  "read_only_live_catalog": {
+    "captured_at_utc": "2026-08-24T20:33:33.303Z",
+    "management_migration_count": 23,
+    "required_migrations_present": [],
+    "required_migrations_missing": [
+      "20260824135752",
+      "20260824153216",
+      "20260824162713",
+      "20260824172420",
+      "20260824201237"
+    ],
+    "profiles_columns": [
+      "id",
+      "email",
+      "full_name",
+      "organization_name",
+      "phone",
+      "created_at",
+      "updated_at",
+      "runsignup_access_token",
+      "runsignup_refresh_token",
+      "runsignup_token_expires_at"
+    ],
+    "activities_idempotency_columns": [
+      {
+        "udt_name": "int8",
+        "data_type": "bigint",
+        "column_name": "athlete_id",
+        "is_nullable": "NO",
+        "column_default": null
+      }
+    ],
+    "activities_constraints": [],
+    "activities_indexes": [],
+    "protected_rpc_count": 8,
+    "service_only_rpc_count": 0,
+    "cron_job_count": 5,
+    "trigger_target_count": 20,
+    "oauth_state_table_present": false,
+    "garmin_oauth_legacy_counts": {
+      "owned_rows": 2,
+      "total_rows": 2,
+      "expired_rows": 2,
+      "latest_expiry": "2026-02-10T20:26:08.22+00:00",
+      "ownerless_rows": 0,
+      "earliest_expiry": "2026-01-08T01:34:14.962+00:00",
+      "newest_created_at": "2026-02-10T20:16:08.22+00:00",
+      "oldest_created_at": "2026-01-08T01:24:14.962+00:00",
+      "active_unexpired_rows": 0
+    },
+    "oauth_tokens_counts": {
+      "total_rows": 0,
+      "newest_created_at": null,
+      "oldest_created_at": null
+    },
+    "artifact": "task-8-read-only-preflight-artifacts/live-catalog-snapshot.json"
+  }
+}

@@ -3,17 +3,14 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { sendPush } from "../_shared/apns.ts";
+import { createNotifyActivityInsertHandler } from "./handler.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
+export const handler = createNotifyActivityInsertHandler(async (req) => {
   try {
     const payload = await req.json();
     const { record } = payload;
@@ -80,7 +77,7 @@ Deno.serve(async (req) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "X-Runaway-Internal-Secret": Deno.env.get("INTERNAL_JOB_SECRET")!,
       },
       body: JSON.stringify({ athlete_id: record.athlete_id, activity_id: record.id }),
     }).catch((err) => console.error("❌ Breakthrough trigger failed:", err));
@@ -96,4 +93,8 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-});
+}, { headers: corsHeaders });
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

@@ -1,10 +1,18 @@
 // Supabase Edge Function: feedback-workout
 // Adlerian post-workout encouragement using athlete identity profile
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import {
+  parseLegacyAthleteId,
+  resolveUserEndpointDependencies,
+  userGuardErrorResponse,
+  type UserEndpointDependencies,
+} from '../_shared/user-endpoint.ts'
 
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
+interface FeedbackDependencies extends UserEndpointDependencies {
+  fetch: typeof fetch
+  getEnv: (name: string) => string | undefined
+}
 
 function deriveEffortLabel(distance: number | null, elapsedTime: number | null): string {
   if (!distance || !elapsedTime || distance === 0 || elapsedTime === 0) {
@@ -20,15 +28,25 @@ function deriveEffortLabel(distance: number | null, elapsedTime: number | null):
   return 'Easy'
 }
 
-Deno.serve(async (req) => {
+export function createHandler(overrides: Partial<FeedbackDependencies> = {}) {
+  const userDeps = resolveUserEndpointDependencies(overrides)
+  const deps: FeedbackDependencies = {
+    ...userDeps,
+    fetch: overrides.fetch ?? globalThis.fetch,
+    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
+  }
+
+  return async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
 
   try {
     const { athlete_id, activity_id } = await req.json()
+    const requestedAthleteId = parseLegacyAthleteId(athlete_id)
+    const context = await deps.requireUser(req, requestedAthleteId)
 
-    if (!athlete_id || !activity_id) {
+    if (requestedAthleteId === null || !activity_id) {
       return new Response(
         JSON.stringify({
           error: {
@@ -43,21 +61,23 @@ Deno.serve(async (req) => {
       )
     }
 
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    const athleteId = context.athleteId
+    const supabaseAdmin = deps.getAdmin()
 
     // Fetch activity, scoped to both activity ID and athlete ID
     const { data: activity, error: activityError } = await supabaseAdmin
       .from('activities')
       .select('id, distance, elapsed_time, average_heartrate, sport_type, name')
       .eq('id', activity_id)
-      .eq('athlete_id', athlete_id)
+      .eq('athlete_id', athleteId)
       .single()
 
     if (activityError || !activity) {
-      console.error('Activity not found:', activityError)
+      console.error('FEEDBACK_ACTIVITY_LOOKUP_FAILED', {
+        operation: 'activity_lookup',
+        activityId: activity_id,
+        athleteId,
+      })
       return new Response(
         JSON.stringify({
           error: {
@@ -76,7 +96,7 @@ Deno.serve(async (req) => {
     const { data: aiProfile } = await supabaseAdmin
       .from('athlete_ai_profiles')
       .select('core_memory')
-      .eq('athlete_id', athlete_id)
+      .eq('athlete_id', athleteId)
       .maybeSingle()
 
     const adlerianProfile = aiProfile?.core_memory?.adlerian_profile ?? {}
@@ -111,11 +131,12 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
     let feedback = `You showed up today — that's what a ${runnerIdentity} does.`
 
     try {
-      const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
+      const anthropicApiKey = deps.getEnv('ANTHROPIC_API_KEY') ?? ''
+      const anthropicResponse = await deps.fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_API_KEY || '',
+          'x-api-key': anthropicApiKey,
           'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
@@ -134,11 +155,13 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
         const anthropicData = await anthropicResponse.json()
         feedback = anthropicData.content[0].text.trim()
       } else {
-        const errorText = await anthropicResponse.text()
-        console.error('Anthropic API error:', anthropicResponse.status, errorText)
+        console.error('ANTHROPIC_FEEDBACK_FAILED', {
+          operation: 'feedback_generation',
+          status: anthropicResponse.status,
+        })
       }
-    } catch (claudeError) {
-      console.error('Claude call failed, using default feedback:', claudeError)
+    } catch {
+      console.error('ANTHROPIC_FEEDBACK_REQUEST_FAILED', { operation: 'feedback_generation' })
     }
 
     // Insert insight row — one per call, duplicates are acceptable
@@ -150,13 +173,13 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
         insight_data: {
           content: feedback,
           effort_label: effortLabel,
-          athlete_id
+          athlete_id: athleteId
         },
         generated_by: 'feedback-workout'
       })
 
     if (insertError) {
-      console.error('Failed to insert activity insight:', insertError)
+      console.error('FEEDBACK_INSIGHT_WRITE_FAILED', { operation: 'insight_write' })
     }
 
     return new Response(
@@ -167,12 +190,15 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
     )
 
   } catch (error) {
-    console.error('Error in feedback-workout function:', error)
+    const guardResponse = userGuardErrorResponse(error, corsHeaders)
+    if (guardResponse) return guardResponse
+
+    console.error('FEEDBACK_UNEXPECTED_ERROR', { operation: 'feedback_request' })
     return new Response(
       JSON.stringify({
         error: {
           code: 'INTERNAL_ERROR',
-          message: error.message
+          message: 'Internal server error'
         }
       }),
       {
@@ -181,4 +207,9 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
       }
     )
   }
-})
+  }
+}
+
+if (import.meta.main) {
+  Deno.serve(createHandler())
+}

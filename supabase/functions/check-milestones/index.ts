@@ -1,5 +1,10 @@
-import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import {
+  parseLegacyAthleteId,
+  resolveUserEndpointDependencies,
+  userGuardErrorResponse,
+  type UserEndpointDependencies,
+} from '../_shared/user-endpoint.ts'
 
 const RUNNING_SPORT_TYPES = ['Run', 'TrailRun', 'VirtualRun']
 
@@ -118,7 +123,10 @@ function evaluateMilestones(
   return newlyEarned
 }
 
-Deno.serve(async (req) => {
+export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
+  const deps = resolveUserEndpointDependencies(overrides)
+
+  return async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
@@ -126,27 +134,43 @@ Deno.serve(async (req) => {
   try {
     // activity_id is included in the request for log traceability; detection uses full history
     const { athlete_id, activity_id } = await req.json()
+    const requestedAthleteId = parseLegacyAthleteId(athlete_id)
+    const context = await deps.requireUser(req, requestedAthleteId)
 
-    if (!athlete_id) {
+    if (requestedAthleteId === null) {
       return new Response(
         JSON.stringify({ error: { code: 'INVALID_REQUEST', message: 'athlete_id is required' } }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    const athleteId = context.athleteId
+    const supabaseAdmin = deps.getAdmin()
+
+    if (activity_id != null) {
+      const { data: activity, error: activityError } = await supabaseAdmin
+        .from('activities')
+        .select('id')
+        .eq('id', activity_id)
+        .eq('athlete_id', athleteId)
+        .maybeSingle()
+
+      if (activityError || !activity) {
+        return new Response(
+          JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Activity not found for this athlete' } }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+    }
 
     const { data: unearnedRows, error: milestoneError } = await supabaseAdmin
       .from('runner_identity_milestones')
       .select('milestone_key')
-      .eq('athlete_id', athlete_id)
+      .eq('athlete_id', athleteId)
       .eq('earned', false)
 
     if (milestoneError) {
-      console.error('Error fetching milestones:', milestoneError)
+      console.error('MILESTONE_LOOKUP_FAILED', { operation: 'milestone_lookup' })
       return new Response(
         JSON.stringify({ error: { code: 'DB_ERROR', message: 'Failed to fetch milestones' } }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -160,17 +184,19 @@ Deno.serve(async (req) => {
       )
     }
 
-    const unearnedKeys = new Set(unearnedRows.map((r) => r.milestone_key as string))
+    const unearnedKeys = new Set<string>(
+      unearnedRows.map((r: { milestone_key: string }) => r.milestone_key),
+    )
 
     const { data: activities, error: activitiesError } = await supabaseAdmin
       .from('activities')
       .select('distance, activity_date')
-      .eq('athlete_id', athlete_id)
+      .eq('athlete_id', athleteId)
       .in('sport_type', RUNNING_SPORT_TYPES)
       .order('activity_date', { ascending: true })
 
     if (activitiesError) {
-      console.error('Error fetching activities:', activitiesError)
+      console.error('MILESTONE_ACTIVITY_LOOKUP_FAILED', { operation: 'activity_lookup' })
       return new Response(
         JSON.stringify({ error: { code: 'DB_ERROR', message: 'Failed to fetch activities' } }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -186,28 +212,39 @@ Deno.serve(async (req) => {
         const { error: updateError } = await supabaseAdmin
           .from('runner_identity_milestones')
           .update({ earned: true, earned_at: now })
-          .eq('athlete_id', athlete_id)
+          .eq('athlete_id', athleteId)
           .eq('milestone_key', key)
           .eq('earned', false)
         if (updateError) {
-          console.error(`Error marking milestone ${key}:`, updateError)
+          console.error('MILESTONE_UPDATE_FAILED', {
+            operation: 'milestone_update',
+            milestoneKey: key,
+          })
         } else {
           confirmedEarned.push(key)
         }
       }
     }
 
-    console.log('check-milestones complete:', { athlete_id, activity_id, newly_earned: confirmedEarned })
+    console.log('check-milestones complete:', { athlete_id: athleteId, activity_id, newly_earned: confirmedEarned })
 
     return new Response(
       JSON.stringify({ newly_earned: confirmedEarned }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error) {
-    console.error('Error in check-milestones:', error)
+    const guardResponse = userGuardErrorResponse(error, corsHeaders)
+    if (guardResponse) return guardResponse
+
+    console.error('MILESTONE_UNEXPECTED_ERROR', { operation: 'milestone_request' })
     return new Response(
       JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
-})
+  }
+}
+
+if (import.meta.main) {
+  Deno.serve(createHandler())
+}

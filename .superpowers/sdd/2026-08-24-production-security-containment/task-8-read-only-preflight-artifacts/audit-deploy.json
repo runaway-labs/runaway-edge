@@ -1,0 +1,493 @@
+{
+  "mode": "deploy",
+  "errors": [
+    "public.begin_delivery_submission(uuid,bigint): service_role EXECUTE grant is missing on service-only RPC",
+    "public.best_split_pr(bigint,integer,double precision,double precision): anon retains EXECUTE on protected RPC",
+    "public.check_onboarding_status(integer): anon retains EXECUTE on protected RPC",
+    "public.claim_pending_deliveries(integer): service_role EXECUTE grant is missing on service-only RPC",
+    "public.consume_oauth_state(text,text): service_role EXECUTE grant is missing on service-only RPC",
+    "public.create_oauth_state(text,text,uuid,bigint,text,timestamp with time zone): service_role EXECUTE grant is missing on service-only RPC",
+    "public.detect_rest_days(integer,integer): anon retains EXECUTE on protected RPC",
+    "public.ensure_athlete_exists(uuid,text): anon retains EXECUTE on protected RPC",
+    "public.finalize_delivery(uuid,bigint,text,text,text,timestamp with time zone): service_role EXECUTE grant is missing on service-only RPC",
+    "public.get_consecutive_rest_days(integer,date): anon retains EXECUTE on protected RPC",
+    "public.get_current_week_plan(bigint): anon retains EXECUTE on protected RPC",
+    "public.get_rest_day_history(integer,integer): anon retains EXECUTE on protected RPC",
+    "public.get_rest_days_count(integer,date,date): anon retains EXECUTE on protected RPC",
+    "run-ddl: unexpected local function source directory",
+    "schema assumption failed: activities_client_operation_id_contract",
+    "schema assumption failed: analytics_views_service_only",
+    "schema assumption failed: athlete_rpcs_owner_guarded",
+    "schema assumption failed: garmin_oauth_tokens_service_only",
+    "schema assumption failed: internal_callers_use_dedicated_secret",
+    "schema assumption failed: internal_delivery_schema",
+    "schema assumption failed: internal_job_rpcs_service_only",
+    "schema assumption failed: oauth_state_rpcs_service_only",
+    "schema assumption failed: oauth_states_secure",
+    "schema assumption failed: privileged_rpcs_anon_revoked",
+    "schema assumption failed: profiles_credential_free",
+    "schema assumption failed: profiles_security_invoker_and_scoped",
+    "schema assumption failed: user_views_security_invoker_and_scoped",
+    "schema assumption failed: weekly_training_plans_owner_scoped",
+    "schema blocker: migration 20260824135752 is not applied",
+    "schema blocker: migration 20260824153216 is not applied",
+    "schema blocker: migration 20260824162713 is not applied",
+    "schema blocker: migration 20260824172420 is not applied",
+    "schema blocker: migration 20260824201237 is not applied",
+    "schema blocker: private.oauth_states is missing athlete_id",
+    "schema blocker: private.oauth_states is missing auth_user_id",
+    "schema blocker: private.oauth_states is missing consumed_at",
+    "schema blocker: private.oauth_states is missing created_at",
+    "schema blocker: private.oauth_states is missing expires_at",
+    "schema blocker: private.oauth_states is missing provider",
+    "schema blocker: private.oauth_states is missing redirect_url",
+    "schema blocker: private.oauth_states is missing state_hash",
+    "schema blocker: public.activities is missing client_operation_id",
+    "schema blocker: public.profiles columns do not exactly match the credential-free contract",
+    "trigger inventory missing on_activity_insert:public.activities->notify-activity-insert",
+    "trigger inventory unexpected activity-insert-notification->notify-activity-insert",
+    "trigger inventory unexpected on_activity_insert->public.notify_activity_insert"
+  ],
+  "comparisons": [
+    {
+      "slug": "activity-observations",
+      "classification": "expected-active",
+      "localBundleHash": "db689f6d9cce645c49d719e06a6b662b49bef65af9d11e24241eae7d426659b1",
+      "deployedBundleHash": "67b6c7dace9cc4c381e954ffd8348e50b5793ac0d9518a37847ce9a80af377e6",
+      "deployedMetadataHash": "5d9142fa5163866623483c83e41e8e4952a360d542001ae3b22440bd8bd8d63d",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "backfill-splits",
+      "classification": "expected-active",
+      "localBundleHash": "830c2494cee5bbaecb2c104c8f200c1edac09cec70f62f74744a9e394b7fbe11",
+      "deployedBundleHash": "250149d08c7f277231b8d0c43efe08d8ea7f244398562511c04447602eb70ff7",
+      "deployedMetadataHash": "bd42807a76fff0bb074b7ec580f88b43e0ffc5c280fa243f1b3dd5c769dc1803",
+      "deployedVerifyJwt": true
+    },
+    {
+      "slug": "breakthrough-milestones",
+      "classification": "expected-active",
+      "localBundleHash": "8505f57482b3056328b49fc1197f3e9afbbd0ace44387034a0e03ce08e4cdf3d",
+      "deployedBundleHash": "86a1db4bb1423b46ff98c9ff096ebb048a470b89d9c28b915c0bc478dbfffe0f",
+      "deployedMetadataHash": "b70b344a69f068c4eeaf7b554f245b133f35be5c78eaafe6e0a0705b80c2739c",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "chat",
+      "classification": "expected-active",
+      "localBundleHash": "e0b66318836a18cd9b515d101d5a88be0183a882be278908978cd28ad2afe837",
+      "deployedBundleHash": "3a8631d1aff7c2a79b9d5cedffb49804d59acd03476fba7102533796f6e9fd47",
+      "deployedMetadataHash": "e68bf9aaf1b64ab26e62b4e125cb9b3d8320f865b622fe54a3e55b6d45c5e9eb",
+      "deployedVerifyJwt": true
+    },
+    {
+      "slug": "check-conditions",
+      "classification": "expected-active",
+      "localBundleHash": "f4dc00d4a53a5c33a73ab408858da2994453f6aceaf4fbab67eae6fb82f1095a",
+      "deployedBundleHash": "2908bc4e2a20843554704261cbe06710107fb9ef06dcd655dee01f60d03ec2e0",
+      "deployedMetadataHash": "cc010f3fe51929d131c4ee4c1869b036e25c443004e512c353a58b942d2d7c6d",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "check-hooks",
+      "classification": "expected-active",
+      "localBundleHash": "79b2826906d98247191ae36ca1d89477e92ea138e189a9488478418cfa089a10",
+      "deployedBundleHash": "a68594576728cbfeb1a6583ff12c6238a29328728294e1a94285126b261624f8",
+      "deployedMetadataHash": "cecf363317183936c589dd0a69c46cddcfe5717acb864272220469e3ed65d19c",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "check-hooks2",
+      "classification": "expected-active",
+      "localBundleHash": "95fa072b5cef17e88b1139192073cf6775d4e11cff99e74de0dbffc864907244",
+      "deployedBundleHash": "4107689ba922084e998bdcc6d406a163097ee56db288b10c7e16fa1e805e345a",
+      "deployedMetadataHash": "6a591dcbcbbbe01c816bafd681a88e37121e3249c26ee614425bb7161656a9c1",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "check-milestones",
+      "classification": "expected-active",
+      "localBundleHash": "65d8a243b420e327a6890f3bbcaaed9bdcb72921db274d1d18c9b3e080380d3f",
+      "deployedBundleHash": "77eedb8acedf8464d301dfc391ddd2c255be43e09e3d275b3aae962be9d2c231",
+      "deployedMetadataHash": "97b1ab69c954e06093dab5ce3264c1f259840c6853ae0199e39de3d39b48e9ee",
+      "deployedVerifyJwt": true
+    },
+    {
+      "slug": "check-webhook-config",
+      "classification": "expected-active",
+      "localBundleHash": "706c2768a6bc324108a9d24dc572dc664dfaf1da535feead40a1b9098e02abc6",
+      "deployedBundleHash": "f9f59d650056a8e2cf7d5975c0e18632626e7a767872cfab44a7b406a1a61384",
+      "deployedMetadataHash": "8ac87f168af1fc53f438f09773f2fa1819a2a3247c875f6c1fa7ea5d9ee0459d",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "classify-races",
+      "classification": "expected-active",
+      "localBundleHash": "591309d103097b61642696d04b25608fe768093a16011a6be3a0751fcddb3317",
+      "deployedBundleHash": "0cee2ad5fe00f3b2050a4900b9e23d90371dd638aeaea4effa85a086af60ff8a",
+      "deployedMetadataHash": "7a9a906ff63a3bee9be52a6393ced8f13840defc7b2eaeca4d87999f1baac3ae",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "comprehensive-analysis",
+      "classification": "expected-active",
+      "localBundleHash": "e8a94de149f32c01055c6d2d0d0f4b82703e6a4592d02692cf5f3a5f68ca980b",
+      "deployedBundleHash": "e11ea13591ee5c714cf4624a4b3a2a93a5dcc80d7eedfaf545cd209b7635e3f4",
+      "deployedMetadataHash": "e311cbff519e884066b0c32bf75c610d13b016df77dfa8eca92dfbdfbd47383c",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "daily-brief",
+      "classification": "expected-active",
+      "localBundleHash": "abab093e9570974aa20029f10277f85e7c74714718a40fcf7c96f9f07e1cbcd2",
+      "deployedBundleHash": "514b3d9bc9b5bd66d6c163c4cfb099d071f842d66e2e1293d4658f322e66469d",
+      "deployedMetadataHash": "8fc68d27a5a2f0881d6720a33b3c8670bb50dc0ab92441612848dcdcb69cf190",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "daily-research-brief",
+      "classification": "expected-active",
+      "localBundleHash": "b5f1ad2a685515a9ceea69e0f3b62605f7c503d353a504efa42ccd654a0b800b",
+      "deployedBundleHash": "023bfba24cc134a3394c46ca949fe6a5209a56c06caa7ba35ee6a0a28b1d66a1",
+      "deployedMetadataHash": "d3cd7789d70bec4a7b54f30b4dcfd7695fa6910a763b38e1e85e13dc0677cda4",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "delete-account",
+      "classification": "expected-active",
+      "localBundleHash": "45c729d249c438e35e75918e0801a507bbffc9abd6ab828b91ddd5391ceee8a8",
+      "deployedBundleHash": "4154c791ceaf54d4d943913b7d510ddb630c7bc8ebf1c710cc7eb9a6eb6b9488",
+      "deployedMetadataHash": "a949ae02647ae783543470546fccab532c1539b2b2df2958d313ec315e71ad19",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "disconnect",
+      "classification": "expected-active",
+      "localBundleHash": "ef8d7c732bdaed083b7b64a59ca5948ac11e82b288a7dc5b769552d9e00f8bbe",
+      "deployedBundleHash": "ff1857d87f5700315ab92a159b172c77c4a027cf8cbd457da6350541400ca743",
+      "deployedMetadataHash": "c62bbec621ca6a94e0e6ef97e926c99924c02d6e924edbc9b4af8b4b727963e9",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "feedback-workout",
+      "classification": "expected-active",
+      "localBundleHash": "6f21d76b3f1203288b62cdd9b5d59123714b755e5aa3f239481db515e9206684",
+      "deployedBundleHash": "1bc3a324102f63039d3590a08d0c0ba5908aafc7c65f711dc8908c7ee3506723",
+      "deployedMetadataHash": "c98852d7f2ef3bed37acf53660c616d79dfa18dd2253b93c7150479385f415af",
+      "deployedVerifyJwt": true
+    },
+    {
+      "slug": "fetch-daily-articles",
+      "classification": "expected-active",
+      "localBundleHash": "5e262b488fb93a8aefaca630df0d0450b029ab847c15b147f504d96f15d329cf",
+      "deployedBundleHash": "cb898b3b1df74689d588d7ecf20f7fb643be6b8d97cd2dbadbcb2c8b5fbdd199",
+      "deployedMetadataHash": "79b4c7fd2575f812736b67e7d8d4cedb86ebe46b93a46e884071294511dd0a6d",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "garmin-auth",
+      "classification": "expected-active",
+      "localBundleHash": "bb4d6e34f84ea080c22b6bad45e26a84c8731e3571285f4e944d5f6b12970b51",
+      "deployedBundleHash": "dec66e6c626e4b72dfeeda1eae80992cd319b6dca1aa92e851f119d49de69ecb",
+      "deployedMetadataHash": "242c4127cb9b9e1d575bd3b52015695d7f3c954a8a87eb03631fefb20c7dffe7",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "garmin-callback",
+      "classification": "expected-active",
+      "localBundleHash": "7d5e89a96974ef0b35e9c6843d5432b1ae82e03943d5f474f3eca38c094da992",
+      "deployedBundleHash": "3058a60772b59b727d73a8b130a57df5fe375dce13e542189fd22fc696c7d34d",
+      "deployedMetadataHash": "bbbb6f2f96086ab0d630458d018bc641613633a6bf0b3a2c00738d91603d871b",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "garmin-stats",
+      "classification": "expected-active",
+      "localBundleHash": "46300fcae69917cc9d5338adad75ef0082254e101b7d273a3a8acfb1ea60fedb",
+      "deployedBundleHash": "c187d692ee33a0f4628015d983c1021119028a025b1384cb15b77963b7805045",
+      "deployedMetadataHash": "b14fcd51ce2199f9d0fc484948b731ba98415c950aa2e45d9fa99a655fd2ead6",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "garmin-webhook",
+      "classification": "expected-active",
+      "localBundleHash": "b411030d607beeea11f316be2988e157067287a91510e16ff20f486d8fcf7c21",
+      "deployedBundleHash": "e87fe07eb8bcacc12c592b8130b77ee4a785e1ae354041f21f7c854bd8f4b82b",
+      "deployedMetadataHash": "76402af3ca7c107ba4e79ef9290fe9adeba9872e6d78815ffe2ddac5094be2c8",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "generate-run-cues",
+      "classification": "expected-active",
+      "localBundleHash": "2f38370095379f9675f5f72ddf5834030e36889b3d192e816f2de68510fba1b1",
+      "deployedBundleHash": "c980d0bbabd4710161372cdd03c4172f5a72cd771508c058feafb11a47ca1f5e",
+      "deployedMetadataHash": "238012564cb1769b1bb9f0ef0ac463a4e71394d8f333c9c1642144d93a7d9fe1",
+      "deployedVerifyJwt": true
+    },
+    {
+      "slug": "generate-training-plan",
+      "classification": "expected-active",
+      "localBundleHash": "ce8a6acd30258e49522fea12e351d2bc41a9e21c0469f95e5c05960aed8f3b82",
+      "deployedBundleHash": "b156878f55db883d02eadc4c89ea34cf97e7914317b826c03cf6291c0dc8deb6",
+      "deployedMetadataHash": "3c435d77fbf5b4e6964cad072dee0fc58080d7b7421fb804acb6502ad5e1b34a",
+      "deployedVerifyJwt": true
+    },
+    {
+      "slug": "get-race-course",
+      "classification": "expected-active",
+      "localBundleHash": "d4acbf85c40fa4b134731dc23d20b2358a5cf9277c209a8e671981d2d22c307d",
+      "deployedBundleHash": "0179b9d368ff32c7454454628d719349290b8645231d33a710058f00ec2e95f4",
+      "deployedMetadataHash": "5e37537cc6e3c2e3d788527c356ceeb86217d7ccdc57de57904e508319be6a23",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "goal-assessment",
+      "classification": "expected-active",
+      "localBundleHash": "9b60a1d8a06da3d9c7fbedc379803be219445cd8cd04708377f5c2fe802519d3",
+      "deployedBundleHash": "c7cffab0c5044728c68599f03a31aea7562d5bcc28ca8796634ab7afc2a048f3",
+      "deployedMetadataHash": "23d442ce32fdf823d974630d5f7ad8fd63e0f31289926a54e2ee94a4d168ad9d",
+      "deployedVerifyJwt": true
+    },
+    {
+      "slug": "identity-profile",
+      "classification": "expected-active",
+      "localBundleHash": "8a278ff8062401d33368fb91da1e32df792ac32b17ba4f3bc87c087ed3637191",
+      "deployedBundleHash": "22c65dc21db97fbfc17a7dee549d65dfa83801c1cbc13f340be9d5b7259a09b4",
+      "deployedMetadataHash": "25ef742c7f37b6922fe7dc90026669e6424f6d55b7605ec4afa0a47e4a66cfae",
+      "deployedVerifyJwt": true
+    },
+    {
+      "slug": "import-runners",
+      "classification": "expected-active",
+      "localBundleHash": "710259baee3980b5588649d48fcca8834b0977d9f98423ba99c4a113a2a9fb01",
+      "deployedBundleHash": "951e366188157ba667ab5d8f607124e6be985db771ccc602dced2cdffc89ae26",
+      "deployedMetadataHash": "5c57a034b30b48ab37c7cd9c27851ad62fb7c0644a97029997dadbc0589e7678",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "job-status",
+      "classification": "expected-active",
+      "localBundleHash": "8f8fd1ca48f9812965781799ab0d566860454bf4fcc31986a10ccda556d31d7e",
+      "deployedBundleHash": "908543fb1e93d7aea9325cace1786cf7078130b68aa1c91f1eb9aca515e58ea2",
+      "deployedMetadataHash": "05fba576cc602781508e4b56b7f26d79ee761300db9fa69dcef8f86a0b27d61f",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "journal",
+      "classification": "expected-active",
+      "localBundleHash": "84f2465db56d016aadb88417da4da69cff6ba36d815c029ed2372e5f4ceea7c2",
+      "deployedBundleHash": "a36ad9a80e9fd2d7bde50aad5f798380e9bb599ca17c7b62de1f2da80d133c0f",
+      "deployedMetadataHash": "ee938f1278afba65c51c08fdf41b28d1f5a3d9252a1086e9f3179ba03068ffc1",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "max-data",
+      "classification": "expected-active",
+      "localBundleHash": "f455f6e4949e4eba29f44609a21841f9a07a6e02316afe953a3c3417436f85d1",
+      "deployedBundleHash": "5729536feab554073f5c28e7902296386d5b81e7f44aaa070143f9cbfa8b3e9b",
+      "deployedMetadataHash": "b967dd2d1173d693719f7fcf0098b714099d644dc1e33dba074f5f44f34d0527",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "micro-wins",
+      "classification": "expected-active",
+      "localBundleHash": "4ac0f43e7d8572a6344ad8c5e8434b87d1a20c80959914e17739aa43781c8192",
+      "deployedBundleHash": "70ae6d2dd5f8d23a4df2308b0841f072c8751f467aeaa25dddeb58c4f1673b57",
+      "deployedMetadataHash": "8e1e4081f1c7221aac3b3cd2e0bfccb6e970f449e8110a5a17a5521e82a4c174",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "notify-activity-insert",
+      "classification": "expected-active",
+      "localBundleHash": "cc785c95bb443816f3b7c6bf8ca0c03693b5afec0aa0de84f4175f8a16975a84",
+      "deployedBundleHash": "20c470211d55568cbbd3407ae9d8729df3a16f6eab6dcb71a2a9091839949978",
+      "deployedMetadataHash": "8480880d59df6910c0bd5ed7d832ff060b17d1aa908b83c43aaf7045626ebd31",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "oauth-callback",
+      "classification": "expected-active",
+      "localBundleHash": "3d2fccc4fb3b1821ff44b8e7622f9aca7400acacd22c8436727b490602efd0d3",
+      "deployedBundleHash": "ff6ba2cac0fb6130224e7397d7a1266b086684bdcd6379f553c28f0e0350f1cd",
+      "deployedMetadataHash": "7c0f21e92c672ef5c3cea40ca295226698fcbdee5343691f27f0f2a40b3819b4",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "process-deliveries",
+      "classification": "expected-active",
+      "localBundleHash": "9ad5fb77c94b6bcf8ea18a9778c435a083ab1baa7a985f088b09e9c113b264ce",
+      "deployedBundleHash": "d1be0e375312d8a643077eb33ef18a2079537a94bb8842a78504354d75993877",
+      "deployedMetadataHash": "5d391a1d9baaa14340f9cad6a95959704ab4b09417740932b6164df93dc13f8c",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "regenerate-training-plan",
+      "classification": "expected-active",
+      "localBundleHash": "a99e7e7ce2b5624e6fd7ace67d965063983dd5624746cb9baf81046f953725cc",
+      "deployedBundleHash": "003e29f660bc9fbee9dd5bb6d9446778a102a19c653457168257abbaa80edd1b",
+      "deployedMetadataHash": "0f95af3e9593744222b001c4f42101566bae9c4ebdf567830b795a4a5c40b2a6",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "send-alert",
+      "classification": "expected-active",
+      "localBundleHash": "982e2a45fa5d6c62e28cff49ba6eccecf5840c4ad0fc7ac5735311895d712aa0",
+      "deployedBundleHash": "aeac3fe28e2ffa3837004b4d54b2a33fa1e21ddb759316036f7f71f6638eb9d0",
+      "deployedMetadataHash": "6dd7716a5f74c0cefa9620810591d8aacaf8c50031a9f10d419d886e48f1bb68",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "strava-auth",
+      "classification": "expected-active",
+      "localBundleHash": "a8d670657d4d2c9cb27fe7e86bd24044c28d3328ca89c7ab194fe08f739d1a4b",
+      "deployedBundleHash": "a0d9e7a6e02db94e23924d671c18ae23aed7fce11872ac0eea84347e48c0486b",
+      "deployedMetadataHash": "e04dcca81ad76fa7f90a991391a2e55fe16d99cb63129cdb5d23964577befe2e",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "strava-webhook",
+      "classification": "expected-active",
+      "localBundleHash": "41745d80736cb0d755329d6553b0646e94a5e65ed38490f36e2ad0cb4a730868",
+      "deployedBundleHash": "ec1578f7553886f804f7a0496e4b2805a019aa65fab44ce8765b98824fb09dc3",
+      "deployedMetadataHash": "0e5a7763ff1083e212d81d9009f18c2e44bb7dfa8231b71f61e24199d66c7827",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "sync-beta",
+      "classification": "expected-active",
+      "localBundleHash": "512461dbc389a46a136b0872abea6f3c0f13e1f69ff4ac75134aa03d6b93109e",
+      "deployedBundleHash": "654f59ae6eec006615f8389178c0d75b54920c79bdfe16da3d349d61876f0cfa",
+      "deployedMetadataHash": "5b7eae12ebdbb41063679e5b9b54271f2d5c1b68792edd95661c8210217eece4",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "sync-race-directory",
+      "classification": "expected-active",
+      "localBundleHash": "6ce790cc078485c786056b148c32cfdd4ff8f83ef822f0177cf108facf3246d8",
+      "deployedBundleHash": "c8a72874e9f302d154fed980434ebc09f2e176927952d2484568cb9b04a03a27",
+      "deployedMetadataHash": "35b2e98c5257c6d9191836eacfc800d3123d256aa555ceddb159815a1ece507d",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "training-plan",
+      "classification": "expected-active",
+      "localBundleHash": "6d7c49771a2b571807b40f7c6efadbf1fc5eb0ed06a5192e8cc4147d36cea4da",
+      "deployedBundleHash": "b47fe5fb81255e67efa45b083a6d2fb76395b3ad1279824a6f4d7d48327e5db6",
+      "deployedMetadataHash": "f5ffd1d6d3ba5fda8e915cc9b65a59a5997c0098773712b4e1b9f217af2e70c2",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "user-races",
+      "classification": "expected-active",
+      "localBundleHash": "1589537f87274468bb249d758f4153ac82972f7f263aac22b2413b090054af25",
+      "deployedBundleHash": "c7235c6930a7f3e2d3cb39f5a711f5fe6a64d4161a4e1a8e6abe12f068209fcd",
+      "deployedMetadataHash": "022f66921cc2afe6dfa32087c432b11fcd9dcd1c3cea5f559fb8029de8c1064e",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "backfill-training-zones",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "6a8a7c80bba8c10bebf4df8fdc0bfd4b9d79be49072e6781e71bdfff7564d7d1",
+      "deployedMetadataHash": "00c5984c2cccd24bd9320ab8303baa356d1292cd08e80cf9a17cafb98305e3b1",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "data-sci-audit",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "d54be8867712fd1d9477311191ffbb994591301aa2e71c6c7f613393eb678911",
+      "deployedMetadataHash": "9fafe96ab94467630940d492382f2b72ba14aeefefbf366fee7acf998e17e957",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "debug-query",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "4e6a2b5c5085a5befcffcfc4b4ca420d7425cb452614b4e9d0114d2e108d2189",
+      "deployedMetadataHash": "84ce17b857aa6c50632d3086d16ea4562d01d01d1269bcfd6bc2ae31d95c833c",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "fix-elevation",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "f53a5eaf95a38e1ac1423fb73263b4d23d9267f8c472cb32c82abf5d7bd69ccc",
+      "deployedMetadataHash": "25b582e21c40b16ef02e2f39beb12562237cb72a3667f153464796aaa69f8299",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "fix-elevation-stl",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "664201f042431a486e6ce906a08397e842b3ef4a2be233982dd6aa4ef01a148a",
+      "deployedMetadataHash": "64b8af2f794dee413aa52c1b11bebb990bc7e62c5280763097cfd8078138aa05",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "kill-cron",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "163e73b4f6547152cbd7f091377e193c8c11d8638ca16ab5877f42293cfee61b",
+      "deployedMetadataHash": "bfba5cdff49d13cbc4098f0d0d39b10f57333023f9496426fc37f2c85f81317b",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "kill-research",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "4857d2f509e2778a9bc0db7313122399278957a35eb8d7ab66fc8eff35001301",
+      "deployedMetadataHash": "30aa73aa03563788283152bb640bed86cbd5233a01960aba18b6f5bd8b0293b1",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "list-cron",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "89eb52fed794b69ece00cae6a00edf606cfb75b3edfafd51b092881ce16ed6e4",
+      "deployedMetadataHash": "c9a4a09599ce36403ad0f4af085b9ba195b7e005b3308fd643aa329880e25d2e",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "pre-run-brief",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "05e5a78556777a6c13f496233ff265617351110457815142863a428acd53c286",
+      "deployedMetadataHash": "75326efe4e585fdf15df7d32d076134275f68b9253015340e9f6aa2fbabf0c3d",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "run-ddl",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "ac9d54ec64b273c8ddf7d294693557461df22eed57851540b963dbf0e7b4c793",
+      "deployedMetadataHash": "a294c4e6efba9c74fccb2fbf3754ec9c5df13c07b39256e71bd6116d410e03c6",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "twin-engine",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "4c3556a83fd61ef194a6e5095cef85b85e313d0d30de4de6586ce6acf63a2894",
+      "deployedMetadataHash": "e242e4c7d1f015fe1512d1654d81450d283007e0c9ad25954e4d15c7929a1cb2",
+      "deployedVerifyJwt": false
+    },
+    {
+      "slug": "ultratracker",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "cd52753fd39cc6211da32bf3e9e83f4a8973913df19f78b07e8803472354b556",
+      "deployedMetadataHash": "3a5ee26bab7021229e384970d12d738eba7801b223c6c6b4d3cb6460fa7a8a0b",
+      "deployedVerifyJwt": true
+    },
+    {
+      "slug": "upload-race-course",
+      "classification": "approved-retirement",
+      "localBundleHash": null,
+      "deployedBundleHash": "382e0a2b01bbe0f40dcdc6e6210281e07facfc06688fe60c5174f4c3ac50df5e",
+      "deployedMetadataHash": "00c323a584e2899c6c2a49df1e0009da32d2e48cbc75c1405699be005024c457",
+      "deployedVerifyJwt": true
+    }
+  ]
+}

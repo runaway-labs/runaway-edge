@@ -2,9 +2,10 @@
 // Monitors weather/AQI for races in next 48h and triggers automatic alerts
 
 import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
-import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
+import { corsHeaders, handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { getCurrentWeather } from "../_shared/weather-api.ts";
 import { getCurrentAqi } from "../_shared/aqi-api.ts";
+import { createCheckConditionsHandler } from "./handler.ts";
 import {
   evaluateAllThresholds,
   getTriggeredThresholds,
@@ -21,15 +22,7 @@ import {
 // Cooldown period to prevent alert spam (1 hour)
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 
-Deno.serve(async (req: Request) => {
-  // Handle CORS preflight
-  const corsResponse = handleCors(req);
-  if (corsResponse) return corsResponse;
-
-  if (req.method !== "POST") {
-    return errorResponse("Method not allowed", 405);
-  }
-
+export const handler = createCheckConditionsHandler(async (_req: Request) => {
   try {
     const supabase = getSupabaseAdmin();
 
@@ -88,7 +81,11 @@ Deno.serve(async (req: Request) => {
       500
     );
   }
-});
+}, { headers: corsHeaders });
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}
 
 async function processRace(
   supabase: ReturnType<typeof getSupabaseAdmin>,
@@ -245,8 +242,8 @@ async function processRace(
 function createDeliveries(
   alertId: string,
   runners: Runner[]
-): Omit<AlertDelivery, "id" | "created_at" | "updated_at" | "sent_at" | "provider_message_id" | "error_message">[] {
-  const deliveries: Omit<AlertDelivery, "id" | "created_at" | "updated_at" | "sent_at" | "provider_message_id" | "error_message">[] = [];
+): Omit<AlertDelivery, "id" | "created_at" | "updated_at" | "sent_at" | "provider_message_id" | "error_message" | "idempotency_key" | "attempt_count" | "processing_started_at" | "claim_generation" | "lease_expires_at">[] {
+  const deliveries: Omit<AlertDelivery, "id" | "created_at" | "updated_at" | "sent_at" | "provider_message_id" | "error_message" | "idempotency_key" | "attempt_count" | "processing_started_at" | "claim_generation" | "lease_expires_at">[] = [];
 
   for (const runner of runners) {
     const prefs = runner.notification_preferences;

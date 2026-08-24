@@ -1,16 +1,23 @@
 name: Deploy Edge Functions
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'supabase/functions/**'
   workflow_dispatch:
+    inputs:
+      cohort:
+        description: Reviewed containment cohort to deploy
+        required: true
+        type: choice
+        options:
+          - user
+          - internal
+          - oauth
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,22 +36,84 @@ jobs:
         with:
           version: latest
 
-      - name: Deploy all edge functions
+      - name: Test fail-closed deployment audit
+        run: npx --yes deno test --allow-read scripts/audit-deployment.test.ts
+
+      - name: Select reviewed rollout cohort
         run: |
-          # Get list of all function directories (exclude _shared and import_map.json)
-          FUNCTIONS=$(find supabase/functions -maxdepth 1 -mindepth 1 -type d ! -name '_shared' -exec basename {} \;)
-          
-          echo "Functions to deploy:"
-          echo "$FUNCTIONS"
-          
-          for fn in $FUNCTIONS; do
-            echo "Deploying $fn..."
-            supabase functions deploy "$fn" \
-              --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}" \
-              --no-verify-jwt
+          case "${{ inputs.cohort }}" in
+            user)
+              before_mode=deploy
+              after_mode=cohort-user
+              cohort_slugs="backfill-splits check-milestones feedback-workout identity-profile journal sync-beta training-plan user-races"
+              ;;
+            internal)
+              before_mode=cohort-user
+              after_mode=cohort-internal
+              cohort_slugs="breakthrough-milestones check-conditions daily-research-brief fetch-daily-articles notify-activity-insert process-deliveries sync-race-directory"
+              ;;
+            oauth)
+              before_mode=cohort-internal
+              after_mode=cohort-oauth
+              cohort_slugs="garmin-auth garmin-callback oauth-callback strava-auth"
+              ;;
+            *) exit 64 ;;
+          esac
+          echo "BEFORE_MODE=$before_mode" >> "$GITHUB_ENV"
+          echo "AFTER_MODE=$after_mode" >> "$GITHUB_ENV"
+          echo "COHORT_SLUGS=$cohort_slugs" >> "$GITHUB_ENV"
+
+      - name: Download reviewed live bundles
+        run: |
+          remote_root="$RUNNER_TEMP/runaway-live-before"
+          inventory_json="$RUNNER_TEMP/runaway-live-functions.json"
+          mkdir -p "$remote_root"
+          supabase functions list --project-ref "$SUPABASE_PROJECT_ID" --output json > "$inventory_json"
+          jq -r '.[].slug' "$inventory_json" | while IFS= read -r function_slug; do
+            mkdir -p "$remote_root/$function_slug/supabase"
+            cp supabase/config.toml "$remote_root/$function_slug/supabase/config.toml"
+            supabase functions download "$function_slug" \
+              --project-ref "$SUPABASE_PROJECT_ID" \
+              --use-api \
+              --workdir "$remote_root/$function_slug"
           done
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          echo "REMOTE_BUNDLES_BEFORE=$remote_root" >> "$GITHUB_ENV"
+
+      - name: Audit reviewed state before cohort deploy
+        run: |
+          npx --yes deno run --allow-read --allow-env --allow-net \
+            scripts/audit-deployment.ts \
+            --mode "$BEFORE_MODE" \
+            --remote-bundles "$REMOTE_BUNDLES_BEFORE"
+
+      - name: Deploy only the reviewed cohort
+        run: |
+          for function_slug in $COHORT_SLUGS; do
+            supabase functions deploy $function_slug --project-ref "$SUPABASE_PROJECT_ID" --use-api
+          done
+
+      - name: Download deployed bundles for verification
+        run: |
+          remote_root="$RUNNER_TEMP/runaway-live-after"
+          inventory_json="$RUNNER_TEMP/runaway-deployed-functions.json"
+          mkdir -p "$remote_root"
+          supabase functions list --project-ref "$SUPABASE_PROJECT_ID" --output json > "$inventory_json"
+          jq -r '.[].slug' "$inventory_json" | while IFS= read -r function_slug; do
+            mkdir -p "$remote_root/$function_slug/supabase"
+            cp supabase/config.toml "$remote_root/$function_slug/supabase/config.toml"
+            supabase functions download "$function_slug" \
+              --project-ref "$SUPABASE_PROJECT_ID" \
+              --use-api \
+              --workdir "$remote_root/$function_slug"
+          done
+          echo "REMOTE_BUNDLES_AFTER=$remote_root" >> "$GITHUB_ENV"
+
+      - name: Verify deployed cohort and deferred baselines
+        run: |
+          npx --yes deno run --allow-read --allow-env --allow-net \
+            scripts/audit-deployment.ts \
+            --mode "$AFTER_MODE" \
+            --remote-bundles "$REMOTE_BUNDLES_AFTER"
 
       - name: Notify Deploy Result
         if: always()

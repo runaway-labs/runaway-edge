@@ -26,14 +26,16 @@ ON activities(source, external_id)
 WHERE external_id IS NOT NULL;
 
 -- Update RLS policies to allow users to see activities linked by auth_user_id
-CREATE POLICY IF NOT EXISTS "Users can view own activities by auth_user_id"
+DROP POLICY IF EXISTS "Users can view own activities by auth_user_id" ON activities;
+CREATE POLICY "Users can view own activities by auth_user_id"
 ON activities
 FOR SELECT
 TO authenticated
 USING (auth_user_id = auth.uid());
 
 -- Allow service role to insert activities from webhooks
-CREATE POLICY IF NOT EXISTS "Service role can manage all activities"
+DROP POLICY IF EXISTS "Service role can manage all activities" ON activities;
+CREATE POLICY "Service role can manage all activities"
 ON activities
 FOR ALL
 TO service_role

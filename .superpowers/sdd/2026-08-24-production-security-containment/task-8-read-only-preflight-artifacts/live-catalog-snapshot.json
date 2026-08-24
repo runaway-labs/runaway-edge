@@ -1,0 +1,1408 @@
+{
+  "project_id": "nkxvjcdxiyjbndjvfmqy",
+  "captured_at_utc": "2026-08-24T20:33:33.303Z",
+  "schema": {
+    "cron_jobs": [
+      {
+        "jobid": 1,
+        "active": true,
+        "jobname": "daily-research-brief",
+        "database": "postgres",
+        "schedule": "0 6 * * *",
+        "username": "postgres"
+      },
+      {
+        "jobid": 2,
+        "active": true,
+        "jobname": "fetch-daily-articles",
+        "database": "postgres",
+        "schedule": "0 6 * * *",
+        "username": "postgres"
+      },
+      {
+        "jobid": 3,
+        "active": true,
+        "jobname": "check-conditions-job",
+        "database": "postgres",
+        "schedule": "*/30 * * * *",
+        "username": "postgres"
+      },
+      {
+        "jobid": 4,
+        "active": false,
+        "jobname": "process-deliveries-job",
+        "database": "postgres",
+        "schedule": "* * * * *",
+        "username": "postgres"
+      },
+      {
+        "jobid": 5,
+        "active": false,
+        "jobname": "sync-race-directory-job",
+        "database": "postgres",
+        "schedule": "0 2 * * *",
+        "username": "postgres"
+      }
+    ],
+    "rpc_grants": [
+      {
+        "owner": "postgres",
+        "signature": "best_split_pr(bigint,integer,double precision,double precision)",
+        "anon_execute": true,
+        "security_definer": true,
+        "service_role_execute": true,
+        "authenticated_execute": true
+      },
+      {
+        "owner": "postgres",
+        "signature": "check_onboarding_status(integer)",
+        "anon_execute": true,
+        "security_definer": true,
+        "service_role_execute": true,
+        "authenticated_execute": true
+      },
+      {
+        "owner": "postgres",
+        "signature": "detect_rest_days(integer,integer)",
+        "anon_execute": true,
+        "security_definer": true,
+        "service_role_execute": true,
+        "authenticated_execute": true
+      },
+      {
+        "owner": "postgres",
+        "signature": "ensure_athlete_exists(uuid,text)",
+        "anon_execute": true,
+        "security_definer": true,
+        "service_role_execute": true,
+        "authenticated_execute": true
+      },
+      {
+        "owner": "postgres",
+        "signature": "get_consecutive_rest_days(integer,date)",
+        "anon_execute": true,
+        "security_definer": true,
+        "service_role_execute": true,
+        "authenticated_execute": true
+      },
+      {
+        "owner": "postgres",
+        "signature": "get_current_week_plan(bigint)",
+        "anon_execute": true,
+        "security_definer": true,
+        "service_role_execute": true,
+        "authenticated_execute": true
+      },
+      {
+        "owner": "postgres",
+        "signature": "get_rest_day_history(integer,integer)",
+        "anon_execute": true,
+        "security_definer": true,
+        "service_role_execute": true,
+        "authenticated_execute": true
+      },
+      {
+        "owner": "postgres",
+        "signature": "get_rest_days_count(integer,date,date)",
+        "anon_execute": true,
+        "security_definer": true,
+        "service_role_execute": true,
+        "authenticated_execute": true
+      }
+    ],
+    "server_version": "17.6",
+    "captured_at_utc": "2026-08-24T20:33:33.303Z",
+    "trigger_targets": [
+      {
+        "enabled": "O",
+        "table_name": "activities",
+        "table_schema": "public",
+        "trigger_name": "activity-insert-notification",
+        "target_function": "supabase_functions.http_request"
+      },
+      {
+        "enabled": "O",
+        "table_name": "activities",
+        "table_schema": "public",
+        "trigger_name": "on_activity_insert",
+        "target_function": "public.notify_activity_insert"
+      },
+      {
+        "enabled": "O",
+        "table_name": "activities",
+        "table_schema": "public",
+        "trigger_name": "update_activities_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "alert_deliveries",
+        "table_schema": "public",
+        "trigger_name": "update_alert_deliveries_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "alert_thresholds",
+        "table_schema": "public",
+        "trigger_name": "update_alert_thresholds_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "athlete_stats",
+        "table_schema": "public",
+        "trigger_name": "trigger_update_athlete_stats_updated_at",
+        "target_function": "public.update_athlete_stats_updated_at"
+      },
+      {
+        "enabled": "O",
+        "table_name": "athletes",
+        "table_schema": "public",
+        "trigger_name": "update_athletes_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "conversations",
+        "table_schema": "public",
+        "trigger_name": "update_conversations_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "daily_commitments",
+        "table_schema": "public",
+        "trigger_name": "update_daily_commitments_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "gear",
+        "table_schema": "public",
+        "trigger_name": "update_gear_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "trigger_name": "profiles_on_insert",
+        "target_function": "public.profiles_insert_trigger"
+      },
+      {
+        "enabled": "O",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "trigger_name": "profiles_on_update",
+        "target_function": "public.profiles_update_trigger"
+      },
+      {
+        "enabled": "O",
+        "table_name": "race_courses",
+        "table_schema": "public",
+        "trigger_name": "update_race_courses_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "race_directory",
+        "table_schema": "public",
+        "trigger_name": "set_race_directory_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "races",
+        "table_schema": "public",
+        "trigger_name": "update_races_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "research_articles",
+        "table_schema": "public",
+        "trigger_name": "trigger_update_research_article_timestamp",
+        "target_function": "public.update_research_article_updated_at"
+      },
+      {
+        "enabled": "O",
+        "table_name": "rest_days",
+        "table_schema": "public",
+        "trigger_name": "rest_days_updated_at",
+        "target_function": "public.update_rest_days_timestamp"
+      },
+      {
+        "enabled": "O",
+        "table_name": "routes",
+        "table_schema": "public",
+        "trigger_name": "update_routes_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "runners",
+        "table_schema": "public",
+        "trigger_name": "update_runners_updated_at",
+        "target_function": "public.update_updated_at_column"
+      },
+      {
+        "enabled": "O",
+        "table_name": "weekly_training_plans",
+        "table_schema": "public",
+        "trigger_name": "trigger_update_weekly_plan_timestamp",
+        "target_function": "public.update_weekly_plan_updated_at"
+      }
+    ],
+    "profiles_columns": [
+      {
+        "udt_name": "uuid",
+        "data_type": "uuid",
+        "column_name": "id",
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "udt_name": "varchar",
+        "data_type": "character varying",
+        "column_name": "email",
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "column_name": "full_name",
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "column_name": "organization_name",
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "column_name": "phone",
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "column_name": "created_at",
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "column_name": "updated_at",
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "column_name": "runsignup_access_token",
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "column_name": "runsignup_refresh_token",
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "column_name": "runsignup_token_expires_at",
+        "is_nullable": "YES",
+        "column_default": null
+      }
+    ],
+    "activities_indexes": [],
+    "migration_versions": [
+      "001",
+      "002",
+      "003",
+      "004",
+      "005",
+      "006",
+      "007",
+      "20250107100000",
+      "20250107200000",
+      "20250108",
+      "20250210000000",
+      "20250210000001",
+      "20260201000001",
+      "20260301000001",
+      "20260304000001",
+      "20260305000001",
+      "20260305000002",
+      "20260313000001",
+      "20260313000002",
+      "20260313000003",
+      "20260315150000",
+      "20260506000001",
+      "20260506000002"
+    ],
+    "oauth_table_columns": [
+      {
+        "udt_name": "uuid",
+        "data_type": "uuid",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "id",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "oauth_token",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "token_secret",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "uuid",
+        "data_type": "uuid",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "auth_user_id",
+        "is_nullable": "YES"
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "created_at",
+        "is_nullable": "YES"
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "expires_at",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "web_redirect_url",
+        "is_nullable": "YES"
+      }
+    ],
+    "activities_constraints": [],
+    "activities_idempotency_columns": [
+      {
+        "udt_name": "int8",
+        "data_type": "bigint",
+        "column_name": "athlete_id",
+        "is_nullable": "NO",
+        "column_default": null
+      }
+    ]
+  },
+  "security": {
+    "cron_jobs": [
+      {
+        "jobid": 1,
+        "active": true,
+        "jobname": "daily-research-brief",
+        "database": "postgres",
+        "schedule": "0 6 * * *",
+        "username": "postgres",
+        "command_md5": "75cd2018e7f57ba0c5071c5bde3cea88",
+        "edge_function_target": "daily-research-brief"
+      },
+      {
+        "jobid": 2,
+        "active": true,
+        "jobname": "fetch-daily-articles",
+        "database": "postgres",
+        "schedule": "0 6 * * *",
+        "username": "postgres",
+        "command_md5": "6a2fb314eda73182671c6e526dc88da5",
+        "edge_function_target": "fetch-daily-articles"
+      },
+      {
+        "jobid": 3,
+        "active": true,
+        "jobname": "check-conditions-job",
+        "database": "postgres",
+        "schedule": "*/30 * * * *",
+        "username": "postgres",
+        "command_md5": "e96ecd4f58fd96137b04148891063a4a",
+        "edge_function_target": "check-conditions"
+      },
+      {
+        "jobid": 4,
+        "active": false,
+        "jobname": "process-deliveries-job",
+        "database": "postgres",
+        "schedule": "* * * * *",
+        "username": "postgres",
+        "command_md5": "6592b760af0311acad3b4f21997a64bd",
+        "edge_function_target": "process-deliveries"
+      },
+      {
+        "jobid": 5,
+        "active": false,
+        "jobname": "sync-race-directory-job",
+        "database": "postgres",
+        "schedule": "0 2 * * *",
+        "username": "postgres",
+        "command_md5": "ae13ff31aaed1838a1c38ad5abfe6403",
+        "edge_function_target": "sync-race-directory"
+      }
+    ],
+    "security_views": [
+      {
+        "owner": "postgres",
+        "view_name": "activity_summary",
+        "schema_name": "public",
+        "definition_md5": "3f91ffc93cc5cd952cc9873de6c5dc63",
+        "security_invoker": false,
+        "references_auth_uid": false
+      },
+      {
+        "owner": "postgres",
+        "view_name": "analytics_activity_funnel",
+        "schema_name": "public",
+        "definition_md5": "4b83c41a88e91afdb58e5e5ff3fa3445",
+        "security_invoker": false,
+        "references_auth_uid": false
+      },
+      {
+        "owner": "postgres",
+        "view_name": "analytics_activity_hours",
+        "schema_name": "public",
+        "definition_md5": "4ab19d2349be608f683321ca20f2974f",
+        "security_invoker": false,
+        "references_auth_uid": false
+      },
+      {
+        "owner": "postgres",
+        "view_name": "analytics_audio_coaching",
+        "schema_name": "public",
+        "definition_md5": "1af8bf23af3680a05892897eb08ad267",
+        "security_invoker": false,
+        "references_auth_uid": false
+      },
+      {
+        "owner": "postgres",
+        "view_name": "analytics_daily_summary",
+        "schema_name": "public",
+        "definition_md5": "2265016cb21cb0132d373c3460857f1d",
+        "security_invoker": false,
+        "references_auth_uid": false
+      },
+      {
+        "owner": "postgres",
+        "view_name": "analytics_user_engagement",
+        "schema_name": "public",
+        "definition_md5": "3d2e7060cb8a62f2a0a22e6df97009e9",
+        "security_invoker": false,
+        "references_auth_uid": false
+      },
+      {
+        "owner": "postgres",
+        "view_name": "conversation_summaries",
+        "schema_name": "public",
+        "definition_md5": "2b46d7b0aafbacf2b8f044214d1f6ba3",
+        "security_invoker": false,
+        "references_auth_uid": false
+      },
+      {
+        "owner": "postgres",
+        "view_name": "monthly_activity_stats",
+        "schema_name": "public",
+        "definition_md5": "ed5bab41993ca187a0a25c2098ebf9c2",
+        "security_invoker": false,
+        "references_auth_uid": false
+      },
+      {
+        "owner": "postgres",
+        "view_name": "profiles",
+        "schema_name": "public",
+        "definition_md5": "f5ee3c0d7467e85800cca3f40fbf609b",
+        "security_invoker": false,
+        "references_auth_uid": false
+      },
+      {
+        "owner": "postgres",
+        "view_name": "recent_journal_entries",
+        "schema_name": "public",
+        "definition_md5": "b9a0389d9cedcc19f11f70776d33ee23",
+        "security_invoker": false,
+        "references_auth_uid": false
+      }
+    ],
+    "captured_at_utc": "2026-08-24T20:35:22.197Z",
+    "internal_objects": [],
+    "oauth_like_tables": [
+      {
+        "table_name": "garmin_oauth_tokens",
+        "row_security": true,
+        "table_schema": "public",
+        "force_row_security": false
+      },
+      {
+        "table_name": "oauth_tokens",
+        "row_security": true,
+        "table_schema": "public",
+        "force_row_security": false
+      }
+    ],
+    "target_table_grants": [
+      {
+        "grantee": "anon",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "DELETE"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "INSERT"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "REFERENCES"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "SELECT"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "TRIGGER"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "TRUNCATE"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "UPDATE"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "DELETE"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "INSERT"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "REFERENCES"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "SELECT"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "TRIGGER"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "TRUNCATE"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "UPDATE"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "DELETE"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "INSERT"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "REFERENCES"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "SELECT"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "TRIGGER"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "TRUNCATE"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "activities",
+        "table_schema": "public",
+        "privilege_type": "UPDATE"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "DELETE"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "INSERT"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "REFERENCES"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "SELECT"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "TRIGGER"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "TRUNCATE"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "UPDATE"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "DELETE"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "INSERT"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "REFERENCES"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "SELECT"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "TRIGGER"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "TRUNCATE"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "UPDATE"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "DELETE"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "INSERT"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "REFERENCES"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "SELECT"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "TRIGGER"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "TRUNCATE"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "garmin_oauth_tokens",
+        "table_schema": "public",
+        "privilege_type": "UPDATE"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "DELETE"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "INSERT"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "REFERENCES"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "SELECT"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "TRIGGER"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "TRUNCATE"
+      },
+      {
+        "grantee": "anon",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "UPDATE"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "DELETE"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "INSERT"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "REFERENCES"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "SELECT"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "TRIGGER"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "TRUNCATE"
+      },
+      {
+        "grantee": "authenticated",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "UPDATE"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "DELETE"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "INSERT"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "REFERENCES"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "SELECT"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "TRIGGER"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "TRUNCATE"
+      },
+      {
+        "grantee": "service_role",
+        "table_name": "profiles",
+        "table_schema": "public",
+        "privilege_type": "UPDATE"
+      }
+    ],
+    "target_table_policies": [
+      {
+        "roles": [
+          "public"
+        ],
+        "command": "DELETE",
+        "permissive": "PERMISSIVE",
+        "table_name": "activities",
+        "policy_name": "Users can delete own activities",
+        "schema_name": "public"
+      },
+      {
+        "roles": [
+          "public"
+        ],
+        "command": "INSERT",
+        "permissive": "PERMISSIVE",
+        "table_name": "activities",
+        "policy_name": "Users can insert own activities",
+        "schema_name": "public"
+      },
+      {
+        "roles": [
+          "public"
+        ],
+        "command": "SELECT",
+        "permissive": "PERMISSIVE",
+        "table_name": "activities",
+        "policy_name": "Users can read own activities",
+        "schema_name": "public"
+      },
+      {
+        "roles": [
+          "public"
+        ],
+        "command": "UPDATE",
+        "permissive": "PERMISSIVE",
+        "table_name": "activities",
+        "policy_name": "Users can update own activities",
+        "schema_name": "public"
+      },
+      {
+        "roles": [
+          "public"
+        ],
+        "command": "ALL",
+        "permissive": "PERMISSIVE",
+        "table_name": "activities",
+        "policy_name": "Users can view own activities",
+        "schema_name": "public"
+      }
+    ],
+    "garmin_oauth_legacy_counts": {
+      "owned_rows": 2,
+      "total_rows": 2,
+      "expired_rows": 2,
+      "latest_expiry": "2026-02-10T20:26:08.22+00:00",
+      "ownerless_rows": 0,
+      "earliest_expiry": "2026-01-08T01:34:14.962+00:00",
+      "newest_created_at": "2026-02-10T20:16:08.22+00:00",
+      "oldest_created_at": "2026-01-08T01:24:14.962+00:00",
+      "active_unexpired_rows": 0
+    }
+  },
+  "oauth": {
+    "oauth_columns": [
+      {
+        "udt_name": "uuid",
+        "data_type": "uuid",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "id",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "oauth_token",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "token_secret",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "uuid",
+        "data_type": "uuid",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "auth_user_id",
+        "is_nullable": "YES"
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "created_at",
+        "is_nullable": "YES"
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "expires_at",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "table_name": "garmin_oauth_tokens",
+        "column_name": "web_redirect_url",
+        "is_nullable": "YES"
+      },
+      {
+        "udt_name": "uuid",
+        "data_type": "uuid",
+        "table_name": "oauth_tokens",
+        "column_name": "id",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "int8",
+        "data_type": "bigint",
+        "table_name": "oauth_tokens",
+        "column_name": "athlete_id",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "table_name": "oauth_tokens",
+        "column_name": "access_token",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "table_name": "oauth_tokens",
+        "column_name": "refresh_token",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "varchar",
+        "data_type": "character varying",
+        "table_name": "oauth_tokens",
+        "column_name": "token_type",
+        "is_nullable": "YES"
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "table_name": "oauth_tokens",
+        "column_name": "expires_at",
+        "is_nullable": "NO"
+      },
+      {
+        "udt_name": "text",
+        "data_type": "text",
+        "table_name": "oauth_tokens",
+        "column_name": "scope",
+        "is_nullable": "YES"
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "table_name": "oauth_tokens",
+        "column_name": "created_at",
+        "is_nullable": "YES"
+      },
+      {
+        "udt_name": "timestamptz",
+        "data_type": "timestamp with time zone",
+        "table_name": "oauth_tokens",
+        "column_name": "updated_at",
+        "is_nullable": "YES"
+      }
+    ],
+    "oauth_tokens_counts": {
+      "total_rows": 0,
+      "newest_created_at": null,
+      "oldest_created_at": null
+    }
+  },
+  "columns_and_targets": {
+    "columns": {
+      "public.athletes": [
+        "id",
+        "auth_user_id",
+        "email",
+        "first_name",
+        "last_name",
+        "sex",
+        "description",
+        "weight",
+        "city",
+        "state",
+        "country",
+        "health_consent_status",
+        "health_consent_date",
+        "created_at",
+        "updated_at",
+        "access_token",
+        "refresh_token",
+        "token_expires_at",
+        "premium",
+        "fcm_token",
+        "strava_connected",
+        "strava_connected_at",
+        "strava_disconnected_at",
+        "last_sync_at",
+        "last_successful_sync_at",
+        "total_syncs",
+        "profile",
+        "profile_medium",
+        "garmin_access_token",
+        "garmin_token_secret",
+        "garmin_connected",
+        "garmin_connected_at",
+        "garmin_refresh_token",
+        "garmin_token_expires_at",
+        "role",
+        "organization",
+        "phone",
+        "runsignup_access_token",
+        "runsignup_refresh_token",
+        "runsignup_token_expires_at",
+        "garmin_fitness_stats",
+        "garmin_stats_updated_at",
+        "daily_brief",
+        "daily_brief_generated_at",
+        "strava_athlete_id",
+        "apns_token"
+      ],
+      "public.profiles": [
+        "id",
+        "email",
+        "full_name",
+        "organization_name",
+        "phone",
+        "created_at",
+        "updated_at",
+        "runsignup_access_token",
+        "runsignup_refresh_token",
+        "runsignup_token_expires_at"
+      ],
+      "public.activities": [
+        "id",
+        "athlete_id",
+        "activity_type_id",
+        "name",
+        "description",
+        "activity_date",
+        "start_time",
+        "elapsed_time",
+        "moving_time",
+        "timer_time",
+        "distance",
+        "elevation_gain",
+        "elevation_loss",
+        "elevation_low",
+        "elevation_high",
+        "max_grade",
+        "average_grade",
+        "average_positive_grade",
+        "average_negative_grade",
+        "max_speed",
+        "average_speed",
+        "average_elapsed_speed",
+        "max_heart_rate",
+        "average_heart_rate",
+        "has_heartrate",
+        "max_watts",
+        "average_watts",
+        "weighted_average_watts",
+        "device_watts",
+        "total_work",
+        "max_cadence",
+        "average_cadence",
+        "calories",
+        "max_temperature",
+        "average_temperature",
+        "weather_condition",
+        "humidity",
+        "wind_speed",
+        "wind_gust",
+        "wind_bearing",
+        "precipitation_intensity",
+        "precipitation_probability",
+        "precipitation_type",
+        "cloud_cover",
+        "weather_visibility",
+        "uv_index",
+        "weather_ozone",
+        "weather_pressure",
+        "apparent_temperature",
+        "dewpoint",
+        "commute",
+        "flagged",
+        "with_pet",
+        "competition",
+        "long_run",
+        "for_a_cause",
+        "trainer",
+        "manual",
+        "private",
+        "filename",
+        "gear_id",
+        "perceived_exertion",
+        "relative_effort",
+        "training_load",
+        "intensity",
+        "average_grade_adjusted_pace",
+        "grade_adjusted_distance",
+        "dirt_distance",
+        "newly_explored_distance",
+        "newly_explored_dirt_distance",
+        "total_steps",
+        "carbon_saved",
+        "pool_length",
+        "total_cycles",
+        "jump_count",
+        "total_grit",
+        "average_flow",
+        "from_upload",
+        "resource_state",
+        "external_id",
+        "created_at",
+        "updated_at",
+        "map_polyline",
+        "map_summary_polyline",
+        "start_latitude",
+        "start_longitude",
+        "end_latitude",
+        "end_longitude",
+        "source",
+        "auth_user_id",
+        "raw_data",
+        "device_name",
+        "kilojoules",
+        "suffer_score",
+        "workout_type",
+        "pr_count",
+        "total_photo_count",
+        "splits"
+      ]
+    },
+    "activity_trigger_targets": [
+      {
+        "trigger_name": "activity-insert-notification",
+        "database_target": "supabase_functions.http_request",
+        "edge_function_target": "notify-activity-insert"
+      },
+      {
+        "trigger_name": "on_activity_insert",
+        "database_target": "public.notify_activity_insert",
+        "edge_function_target": null
+      },
+      {
+        "trigger_name": "update_activities_updated_at",
+        "database_target": "public.update_updated_at_column",
+        "edge_function_target": null
+      }
+    ]
+  },
+  "management_migrations": [
+    {
+      "version": "001",
+      "name": "sync_jobs_schema"
+    },
+    {
+      "version": "002",
+      "name": "setup_pg_cron"
+    },
+    {
+      "version": "003",
+      "name": "activities_schema"
+    },
+    {
+      "version": "004",
+      "name": "weekly_training_plans"
+    },
+    {
+      "version": "005",
+      "name": "daily_research_brief_cron"
+    },
+    {
+      "version": "006",
+      "name": "research_articles"
+    },
+    {
+      "version": "007",
+      "name": "research_articles_cron"
+    },
+    {
+      "version": "20250107100000",
+      "name": "activities_multi_source"
+    },
+    {
+      "version": "20250107200000",
+      "name": "garmin_oauth"
+    },
+    {
+      "version": "20250108",
+      "name": "app_logs"
+    },
+    {
+      "version": "20250210000000",
+      "name": "add_web_redirect_url"
+    },
+    {
+      "version": "20250210000001",
+      "name": "add_garmin_fitness_stats"
+    },
+    {
+      "version": "20260201000001",
+      "name": "add_race_tables"
+    },
+    {
+      "version": "20260301000001",
+      "name": "disable_cron_jobs"
+    },
+    {
+      "version": "20260304000001",
+      "name": "add_daily_brief_cache"
+    },
+    {
+      "version": "20260305000001",
+      "name": "add_daily_brief_to_athletes"
+    },
+    {
+      "version": "20260305000002",
+      "name": "goals_rls_policies"
+    },
+    {
+      "version": "20260313000001",
+      "name": "add_apns_token"
+    },
+    {
+      "version": "20260313000002",
+      "name": "fix_stl_marathon_polyline"
+    },
+    {
+      "version": "20260313000003",
+      "name": "fix_stl_marathon_polyline_correct_id"
+    },
+    {
+      "version": "20260315150000",
+      "name": "activity_insert_webhook"
+    },
+    {
+      "version": "20260506000001",
+      "name": "add_runner_identity_milestones"
+    },
+    {
+      "version": "20260506000002",
+      "name": "add_goal_framing"
+    }
+  ]
+}

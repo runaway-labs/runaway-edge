@@ -133,7 +133,7 @@ entrypoint = "./functions/journal/index.ts"
 
 [functions.oauth-callback]
 enabled = true
-verify_jwt = true
+verify_jwt = false
 import_map = "./functions/oauth-callback/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
@@ -141,6 +141,21 @@ entrypoint = "./functions/oauth-callback/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/oauth-callback/*.html" ]
+
+[functions.strava-auth]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/strava-auth/index.ts"
+
+[functions.garmin-auth]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/garmin-auth/index.ts"
+
+[functions.garmin-callback]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/garmin-callback/index.ts"
 
 [functions.sync-beta]
 enabled = true
@@ -153,10 +168,45 @@ entrypoint = "./functions/sync-beta/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/sync-beta/*.html" ]
 
+[functions.training-plan]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/training-plan/index.ts"
+
+[functions.identity-profile]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/identity-profile/index.ts"
+
+[functions.feedback-workout]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/feedback-workout/index.ts"
+
+[functions.check-milestones]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/check-milestones/index.ts"
+
+[functions.backfill-splits]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/backfill-splits/index.ts"
+
+[functions.user-races]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/user-races/index.ts"
+
 [functions.strava-webhook]
 enabled = true
 verify_jwt = false  # Strava webhooks don't send JWT auth
 entrypoint = "./functions/strava-webhook/index.ts"
+
+[functions.notify-activity-insert]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/notify-activity-insert/index.ts"
 
 [functions.check-conditions]
 enabled = true
@@ -170,10 +220,108 @@ entrypoint = "./functions/process-deliveries/index.ts"
 
 [functions.max-data]
 enabled = true
-verify_jwt = false
+verify_jwt = true
 entrypoint = "./functions/max-data/index.ts"
 
 [functions.breakthrough-milestones]
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/breakthrough-milestones/index.ts"
+
+[functions.daily-research-brief]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/daily-research-brief/index.ts"
+
+[functions.fetch-daily-articles]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/fetch-daily-articles/index.ts"
+
+[functions.sync-race-directory]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/sync-race-directory/index.ts"
+
+# Task 6: every repository-owned production function is explicitly classified.
+# Provider callbacks/webhooks and Task 4 internal jobs remain JWT-free because
+# their handlers perform the approved provider or internal-secret validation.
+[functions.activity-observations]
+enabled = true
+verify_jwt = true
+
+[functions.check-hooks]
+enabled = true
+verify_jwt = true
+
+[functions.check-hooks2]
+enabled = true
+verify_jwt = true
+
+[functions.check-webhook-config]
+enabled = true
+verify_jwt = true
+
+[functions.classify-races]
+enabled = true
+verify_jwt = true
+
+[functions.comprehensive-analysis]
+enabled = true
+verify_jwt = true
+
+[functions.daily-brief]
+enabled = true
+verify_jwt = true
+
+[functions.delete-account]
+enabled = true
+verify_jwt = true
+
+[functions.disconnect]
+enabled = true
+verify_jwt = true
+
+[functions.garmin-stats]
+enabled = true
+verify_jwt = true
+
+[functions.garmin-webhook]
+enabled = true
+verify_jwt = false
+
+[functions.generate-run-cues]
+enabled = true
+verify_jwt = true
+
+[functions.generate-training-plan]
+enabled = true
+verify_jwt = true
+
+[functions.get-race-course]
+enabled = true
+verify_jwt = true
+
+[functions.goal-assessment]
+enabled = true
+verify_jwt = true
+
+[functions.import-runners]
+enabled = true
+verify_jwt = true
+
+[functions.job-status]
+enabled = true
+verify_jwt = true
+
+[functions.micro-wins]
+enabled = true
+verify_jwt = true
+
+[functions.regenerate-training-plan]
+enabled = true
+verify_jwt = true
+
+[functions.send-alert]
+enabled = true
+verify_jwt = true

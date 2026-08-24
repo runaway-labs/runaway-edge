@@ -1,0 +1,12 @@
+{
+  "slug": "list-cron",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase get_edge_function",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "89eb52fed794b69ece00cae6a00edf606cfb75b3edfafd51b092881ce16ed6e4",
+  "verify_jwt": false,
+  "restore_policy": "blocked-pending-security-review",
+  "file_count": 1,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

@@ -2,11 +2,23 @@
 // Fetches activities from Strava and stores them in the database
 // Supports pagination for full sync and date range filtering
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import {
+  parseLegacyAthleteId,
+  resolveUserEndpointDependencies,
+  userGuardErrorResponse,
+  type UserEndpointDependencies,
+} from '../_shared/user-endpoint.ts'
 
 const STRAVA_API_BASE = 'https://www.strava.com/api/v3'
 const STRAVA_PAGE_SIZE = 100 // Max allowed by Strava API
+const MAX_SYNC_ACTIVITIES = 500
+const STRAVA_TOKEN_REFRESH_FAILED = 'STRAVA_TOKEN_REFRESH_FAILED'
+const STRAVA_ACTIVITY_FETCH_FAILED = 'STRAVA_ACTIVITY_FETCH_FAILED'
+
+interface SyncDependencies extends UserEndpointDependencies {
+  fetch: typeof fetch
+}
 
 interface StravaActivity {
   id: number
@@ -42,7 +54,14 @@ interface StravaActivity {
   laps?: any[]
 }
 
-Deno.serve(async (req) => {
+export function createHandler(overrides: Partial<SyncDependencies> = {}) {
+  const userDeps = resolveUserEndpointDependencies(overrides)
+  const deps: SyncDependencies = {
+    ...userDeps,
+    fetch: overrides.fetch ?? globalThis.fetch,
+  }
+
+  return async (req: Request) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -58,31 +77,60 @@ Deno.serve(async (req) => {
       before                   // Unix timestamp - only activities before this time
     } = body
 
-    if (!user_id) {
+    const requestedAthleteId = parseLegacyAthleteId(user_id)
+    const context = await deps.requireUser(req, requestedAthleteId)
+
+    if (requestedAthleteId === null) {
       return new Response(
         JSON.stringify({ error: { code: 'INVALID_REQUEST', message: 'user_id is required' } }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    console.log('Starting sync for user:', user_id, { max_activities, sync_all, after, before })
+    if (
+      !Number.isInteger(max_activities) ||
+      max_activities < 1 ||
+      max_activities > MAX_SYNC_ACTIVITIES
+    ) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: `max_activities must be an integer between 1 and ${MAX_SYNC_ACTIVITIES}`
+          }
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    if (sync_all !== false && sync_all !== undefined) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'sync_all is not available for user-triggered synchronization'
+          }
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const athleteId = context.athleteId
+    console.log('Starting sync for user:', athleteId, { max_activities, after, before })
+
+    const supabaseAdmin = deps.getAdmin()
 
     // Get athlete with OAuth tokens
     const { data: athlete, error: athleteError } = await supabaseAdmin
       .from('athletes')
       .select('id, access_token, refresh_token, token_expires_at, strava_connected')
-      .eq('id', user_id)
+      .eq('id', athleteId)
       .single()
 
     if (athleteError || !athlete) {
-      console.error('Athlete not found:', user_id)
+      console.error('SYNC_ATHLETE_LOOKUP_FAILED', { operation: 'athlete_lookup', athleteId })
       return new Response(
-        JSON.stringify({ error: { code: 'ATHLETE_NOT_FOUND', message: `Athlete ${user_id} not found` } }),
+        JSON.stringify({ error: { code: 'ATHLETE_NOT_FOUND', message: `Athlete ${athleteId} not found` } }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -100,7 +148,12 @@ Deno.serve(async (req) => {
 
     if (tokenExpiresAt && tokenExpiresAt <= new Date()) {
       console.log('Token expired, refreshing...')
-      const refreshed = await refreshStravaToken(athlete.refresh_token, supabaseAdmin, user_id)
+      const refreshed = await refreshStravaToken(
+        athlete.refresh_token,
+        supabaseAdmin,
+        athleteId,
+        deps.fetch,
+      )
       if (!refreshed) {
         return new Response(
           JSON.stringify({ error: { code: 'TOKEN_REFRESH_FAILED', message: 'Failed to refresh Strava token' } }),
@@ -116,7 +169,7 @@ Deno.serve(async (req) => {
       .select('id, name')
 
     if (typesError) {
-      console.error('Error fetching activity types:', typesError)
+      console.error('SYNC_ACTIVITY_TYPES_LOOKUP_FAILED', { operation: 'activity_types_lookup' })
     }
 
     // Build activity type lookup map (Strava type name -> database id)
@@ -128,12 +181,17 @@ Deno.serve(async (req) => {
         activityTypeMap[at.name.toLowerCase()] = at.id
       }
     }
-    console.log('Activity type map:', activityTypeMap)
+    console.log('Activity types loaded', { count: activityTypes?.length ?? 0 })
 
     // Fetch activities from Strava
-    const effectiveLimit = sync_all ? Infinity : max_activities
-    console.log(`Fetching ${sync_all ? 'all' : `up to ${max_activities}`} activities from Strava...`)
-    const activities = await fetchStravaActivities(accessToken, effectiveLimit, after, before)
+    console.log(`Fetching up to ${max_activities} activities from Strava...`)
+    const activities = await fetchStravaActivities(
+      accessToken,
+      max_activities,
+      after,
+      before,
+      deps.fetch,
+    )
     console.log(`Fetched ${activities.length} activities from Strava`)
 
     if (activities.length === 0) {
@@ -153,14 +211,11 @@ Deno.serve(async (req) => {
 
     for (const activity of activities) {
       try {
-        const activityRecord = mapStravaActivity(activity, user_id, activityTypeMap)
+        const activityRecord = mapStravaActivity(activity, athleteId, activityTypeMap)
 
-        console.log(`Upserting activity ${activity.id}: ${activity.name}`)
-        console.log(`  - athlete_id: ${activityRecord.athlete_id}`)
-        console.log(`  - distance: ${activityRecord.distance}`)
-        console.log(`  - activity_date: ${activityRecord.activity_date}`)
+        console.log('Upserting activity', { activityId: activity.id, athleteId })
 
-        const { data: upsertData, error: upsertError, status, statusText } = await supabaseAdmin
+        const { error: upsertError, status } = await supabaseAdmin
           .from('activities')
           .upsert(activityRecord, {
             onConflict: 'id',
@@ -168,31 +223,39 @@ Deno.serve(async (req) => {
           })
           .select('id, name')
 
-        console.log(`  - Response status: ${status} ${statusText}`)
-
         if (upsertError) {
-          console.error(`  - ERROR upserting activity ${activity.id}:`, JSON.stringify(upsertError))
+          console.error('SYNC_ACTIVITY_UPSERT_FAILED', {
+            operation: 'activity_upsert',
+            activityId: activity.id,
+            status,
+          })
           errorCount++
         } else {
-          console.log(`  - SUCCESS: upserted data:`, JSON.stringify(upsertData))
+          console.log('Activity upserted', { activityId: activity.id, status })
           syncedCount++
         }
 
         // Verify the record exists
-        const { data: verifyData, error: verifyError } = await supabaseAdmin
+        const { error: verifyError } = await supabaseAdmin
           .from('activities')
           .select('id, name')
           .eq('id', activity.id)
           .single()
 
         if (verifyError) {
-          console.log(`  - VERIFY FAILED: Activity ${activity.id} NOT in database:`, JSON.stringify(verifyError))
+          console.error('SYNC_ACTIVITY_VERIFY_FAILED', {
+            operation: 'activity_verify',
+            activityId: activity.id,
+          })
         } else {
-          console.log(`  - VERIFY OK: Activity ${activity.id} exists in database:`, JSON.stringify(verifyData))
+          console.log('Activity verified', { activityId: activity.id })
         }
 
-      } catch (err) {
-        console.error(`Error processing activity ${activity.id}:`, err)
+      } catch {
+        console.error('SYNC_ACTIVITY_PROCESSING_FAILED', {
+          operation: 'activity_processing',
+          activityId: activity.id,
+        })
         errorCount++
       }
     }
@@ -210,21 +273,30 @@ Deno.serve(async (req) => {
     )
 
   } catch (error) {
-    console.error('Error in sync-beta:', error)
+    const guardResponse = userGuardErrorResponse(error, corsHeaders)
+    if (guardResponse) return guardResponse
+
+    console.error('SYNC_UNEXPECTED_ERROR', { operation: 'sync_request' })
     return new Response(
-      JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: error.message } }),
+      JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
-})
+  }
+}
+
+if (import.meta.main) {
+  Deno.serve(createHandler())
+}
 
 async function refreshStravaToken(
   refreshToken: string,
   supabase: any,
-  athleteId: number
+  athleteId: number,
+  fetchImpl: typeof fetch,
 ): Promise<string | null> {
   try {
-    const response = await fetch('https://www.strava.com/oauth/token', {
+    const response = await fetchImpl('https://www.strava.com/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -236,7 +308,10 @@ async function refreshStravaToken(
     })
 
     if (!response.ok) {
-      console.error('Token refresh failed:', await response.text())
+      console.error('Strava token refresh failed', {
+        code: STRAVA_TOKEN_REFRESH_FAILED,
+        status: response.status,
+      })
       return null
     }
 
@@ -253,8 +328,8 @@ async function refreshStravaToken(
       .eq('id', athleteId)
 
     return data.access_token
-  } catch (err) {
-    console.error('Error refreshing token:', err)
+  } catch {
+    console.error('STRAVA_TOKEN_REFRESH_EXCEPTION', { operation: 'token_refresh' })
     return null
   }
 }
@@ -263,7 +338,8 @@ async function fetchStravaActivities(
   accessToken: string,
   limit: number,
   after?: number,
-  before?: number
+  before?: number,
+  fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<StravaActivity[]> {
   const allActivities: StravaActivity[] = []
   let page = 1
@@ -283,14 +359,16 @@ async function fetchStravaActivities(
     const url = `${STRAVA_API_BASE}/athlete/activities?${params.toString()}`
     console.log(`Fetching page ${page}...`)
 
-    const response = await fetch(url, {
+    const response = await fetchImpl(url, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('Strava API error:', response.status, errorText)
-      throw new Error(`Strava API error: ${response.status}`)
+      console.error('Strava activity fetch failed', {
+        code: STRAVA_ACTIVITY_FETCH_FAILED,
+        status: response.status,
+      })
+      throw new Error(`${STRAVA_ACTIVITY_FETCH_FAILED}: Unable to fetch Strava activities`)
     }
 
     const pageActivities: StravaActivity[] = await response.json()
@@ -323,8 +401,6 @@ function mapStravaActivity(activity: StravaActivity, athleteId: number, activity
     activityTypeMap[activity.type?.toLowerCase()] ||
     activityTypeMap['Run'] ||  // Default to Run if nothing matches
     1  // Fallback to 1
-
-  console.log(`  - Mapping type: sport_type="${activity.sport_type}", type="${activity.type}" -> activity_type_id=${activityTypeId}`)
 
   return {
     id: activity.id,  // Using Strava ID as primary key

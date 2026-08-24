@@ -1,0 +1,975 @@
+import { HttpError } from "../_shared/require-user.ts";
+import type { RequireUser } from "../_shared/user-endpoint.ts";
+import { createHandler as createBackfillSplitsHandler } from "../backfill-splits/index.ts";
+import { createHandler as createCheckMilestonesHandler } from "../check-milestones/index.ts";
+import { createHandler as createFeedbackWorkoutHandler } from "../feedback-workout/index.ts";
+import { createHandler as createIdentityProfileHandler } from "../identity-profile/index.ts";
+import { createHandler as createJournalHandler } from "../journal/index.ts";
+import { createHandler as createSyncBetaHandler } from "../sync-beta/index.ts";
+import { createHandler as createTrainingPlanHandler } from "../training-plan/index.ts";
+import { createHandler as createUserRacesHandler } from "../user-races/index.ts";
+
+const ATHLETE_A = 42;
+const ATHLETE_B = 99;
+const AUTH_USER_A = "auth-user-a";
+
+function assertEquals<T>(actual: T, expected: T, message?: string): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(message ?? `Expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`);
+  }
+}
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function jsonRequest(
+  url: string,
+  method: string,
+  body: unknown,
+  authorization?: string,
+): Request {
+  return new Request(url, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(authorization ? { Authorization: authorization } : {}),
+    },
+    body: method === "GET" ? undefined : JSON.stringify(body),
+  });
+}
+
+function createGuard(calls: Array<number | null>): RequireUser {
+  return async (req, requestedAthleteId) => {
+    calls.push(requestedAthleteId ?? null);
+    const authorization = req.headers.get("Authorization");
+
+    if (!authorization) {
+      throw new HttpError(401, "MISSING_AUTHORIZATION", "A bearer token is required");
+    }
+
+    if (authorization === "Bearer invalid-token") {
+      throw new HttpError(401, "INVALID_TOKEN", "The bearer token is invalid");
+    }
+
+    if (requestedAthleteId != null && requestedAthleteId !== ATHLETE_A) {
+      throw new HttpError(403, "ATHLETE_MISMATCH", "The requested athlete does not match the authenticated user");
+    }
+
+    return {
+      authUserId: AUTH_USER_A,
+      athleteId: ATHLETE_A,
+      authorization,
+    };
+  };
+}
+
+async function withProviderFetchSpy<T>(
+  action: () => Promise<T>,
+): Promise<{ result: T; providerCalls: number }> {
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = (() => {
+    providerCalls += 1;
+    throw new Error("provider fetch must not run");
+  }) as typeof fetch;
+
+  try {
+    return { result: await action(), providerCalls };
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+type QueryState = {
+  table: string;
+  selected?: string;
+  updated?: unknown;
+  inserted?: unknown;
+  filters: Array<[string, unknown]>;
+  limit?: number;
+};
+
+type QueryResolver = (state: QueryState) => { data: unknown; error: unknown };
+
+function createAdmin(
+  operations: QueryState[],
+  resolve: QueryResolver = (state) => {
+    if (state.table === "weekly_training_plans") {
+      return { data: null, error: { code: "PGRST116" } };
+    }
+    return { data: [], error: null };
+  },
+) {
+  return {
+    from(table: string) {
+      const state: QueryState = { table, filters: [] };
+      const query: any = {
+        select(columns: string) {
+          state.selected = columns;
+          return query;
+        },
+        update(value: unknown) {
+          state.updated = value;
+          return query;
+        },
+        insert(value: unknown) {
+          state.inserted = value;
+          return query;
+        },
+        upsert(value: unknown) {
+          state.inserted = value;
+          return query;
+        },
+        eq(column: string, value: unknown) {
+          state.filters.push([column, value]);
+          return query;
+        },
+        gte() {
+          return query;
+        },
+        lt() {
+          return query;
+        },
+        in() {
+          return query;
+        },
+        is() {
+          return query;
+        },
+        order() {
+          return query;
+        },
+        maybeSingle() {
+          return query;
+        },
+        single() {
+          return query;
+        },
+        limit(value: number) {
+          state.limit = value;
+          return query;
+        },
+        then(onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
+          operations.push({
+            ...state,
+            filters: [...state.filters],
+          });
+          return Promise.resolve(resolve(state)).then(onFulfilled, onRejected);
+        },
+      };
+      return query;
+    },
+  };
+}
+
+type EndpointCase = {
+  name: string;
+  create: (deps: { requireUser: RequireUser; getAdmin: () => any }) => (req: Request) => Promise<Response>;
+  request: (athleteId: number, authorization?: string) => Request;
+  ownerRequest: (authorization: string) => Request;
+};
+
+const endpointCases: EndpointCase[] = [
+  {
+    name: "sync-beta",
+    create: createSyncBetaHandler,
+    request: (athleteId, authorization) =>
+      jsonRequest("https://example.test/sync-beta", "POST", {
+        user_id: athleteId,
+        max_activities: 1,
+      }, authorization),
+    ownerRequest: (authorization) =>
+      jsonRequest("https://example.test/sync-beta", "POST", {
+        user_id: ATHLETE_A,
+        max_activities: 0,
+      }, authorization),
+  },
+  {
+    name: "training-plan",
+    create: createTrainingPlanHandler,
+    request: (athleteId, authorization) =>
+      new Request(
+        `https://example.test/training-plan?athlete_id=${athleteId}&week_start_date=2026-08-24`,
+        { headers: authorization ? { Authorization: authorization } : undefined },
+      ),
+    ownerRequest: (authorization) =>
+      new Request(`https://example.test/training-plan?athlete_id=${ATHLETE_A}`, {
+        headers: { Authorization: authorization },
+      }),
+  },
+  {
+    name: "identity-profile",
+    create: createIdentityProfileHandler,
+    request: (athleteId, authorization) =>
+      jsonRequest("https://example.test/identity-profile", "POST", {
+        athlete_id: athleteId,
+        why_i_run: "health",
+        core_values: ["consistency"],
+      }, authorization),
+    ownerRequest: (authorization) =>
+      jsonRequest("https://example.test/identity-profile", "POST", {
+        athlete_id: ATHLETE_A,
+      }, authorization),
+  },
+  {
+    name: "feedback-workout",
+    create: createFeedbackWorkoutHandler,
+    request: (athleteId, authorization) =>
+      jsonRequest("https://example.test/feedback-workout", "POST", {
+        athlete_id: athleteId,
+        activity_id: 123,
+      }, authorization),
+    ownerRequest: (authorization) =>
+      jsonRequest("https://example.test/feedback-workout", "POST", {
+        athlete_id: ATHLETE_A,
+      }, authorization),
+  },
+  {
+    name: "check-milestones",
+    create: createCheckMilestonesHandler,
+    request: (athleteId, authorization) =>
+      jsonRequest("https://example.test/check-milestones", "POST", {
+        athlete_id: athleteId,
+      }, authorization),
+    ownerRequest: (authorization) =>
+      jsonRequest("https://example.test/check-milestones", "POST", {
+        athlete_id: ATHLETE_A,
+      }, authorization),
+  },
+  {
+    name: "backfill-splits",
+    create: createBackfillSplitsHandler,
+    request: (athleteId, authorization) =>
+      jsonRequest("https://example.test/backfill-splits", "POST", {
+        athlete_id: athleteId,
+        limit: 1,
+      }, authorization),
+    ownerRequest: (authorization) =>
+      jsonRequest("https://example.test/backfill-splits", "POST", {
+        athlete_id: ATHLETE_A,
+        limit: 0,
+      }, authorization),
+  },
+  {
+    name: "journal-generate",
+    create: createJournalHandler,
+    request: (athleteId, authorization) =>
+      jsonRequest("https://example.test/journal/generate", "POST", {
+        athlete_id: athleteId,
+        week_start_date: "2026-08-24",
+      }, authorization),
+    ownerRequest: (authorization) =>
+      jsonRequest("https://example.test/journal/generate", "POST", {
+        athlete_id: ATHLETE_A,
+        week_start_date: "2026-08-24",
+      }, authorization),
+  },
+  {
+    name: "journal-generate-recent",
+    create: createJournalHandler,
+    request: (athleteId, authorization) =>
+      jsonRequest("https://example.test/journal/generate-recent", "POST", {
+        athlete_id: athleteId,
+        weeks: 1,
+      }, authorization),
+    ownerRequest: (authorization) =>
+      jsonRequest("https://example.test/journal/generate-recent", "POST", {
+        athlete_id: ATHLETE_A,
+        weeks: 1,
+      }, authorization),
+  },
+  {
+    name: "journal",
+    create: createJournalHandler,
+    request: (athleteId, authorization) =>
+      new Request(`https://example.test/journal/${athleteId}`, {
+        headers: authorization ? { Authorization: authorization } : undefined,
+      }),
+    ownerRequest: (authorization) =>
+      new Request(`https://example.test/journal/${ATHLETE_A}`, {
+        headers: { Authorization: authorization },
+      }),
+  },
+];
+
+for (const endpoint of endpointCases) {
+  Deno.test(`${endpoint.name}: no token returns 401 before service access`, async () => {
+    const guardCalls: Array<number | null> = [];
+    let adminCalls = 0;
+    const { result: response, providerCalls } = await withProviderFetchSpy(() => {
+      const handler = endpoint.create({
+        requireUser: createGuard(guardCalls),
+        getAdmin: () => {
+          adminCalls += 1;
+          return createAdmin([]);
+        },
+      });
+      return handler(endpoint.request(ATHLETE_A));
+    });
+    assertEquals(response.status, 401);
+    assertEquals(adminCalls, 0);
+    assertEquals(providerCalls, 0);
+  });
+
+  Deno.test(`${endpoint.name}: invalid token returns 401 before service access`, async () => {
+    let adminCalls = 0;
+    const { result: response, providerCalls } = await withProviderFetchSpy(() => {
+      const handler = endpoint.create({
+        requireUser: createGuard([]),
+        getAdmin: () => {
+          adminCalls += 1;
+          return createAdmin([]);
+        },
+      });
+      return handler(endpoint.request(ATHLETE_A, "Bearer invalid-token"));
+    });
+    assertEquals(response.status, 401);
+    assertEquals(adminCalls, 0);
+    assertEquals(providerCalls, 0);
+  });
+
+  Deno.test(`${endpoint.name}: athlete substitution returns 403 before service access`, async () => {
+    const guardCalls: Array<number | null> = [];
+    let adminCalls = 0;
+    const { result: response, providerCalls } = await withProviderFetchSpy(() => {
+      const handler = endpoint.create({
+        requireUser: createGuard(guardCalls),
+        getAdmin: () => {
+          adminCalls += 1;
+          return createAdmin([]);
+        },
+      });
+      return handler(endpoint.request(ATHLETE_B, "Bearer valid-token"));
+    });
+    assertEquals(response.status, 403);
+    assertEquals(guardCalls, [ATHLETE_B]);
+    assertEquals(adminCalls, 0);
+    assertEquals(providerCalls, 0);
+  });
+
+  Deno.test(`${endpoint.name}: matching athlete reaches its domain contract`, async () => {
+    const operations: QueryState[] = [];
+    const handler = endpoint.create({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin(operations),
+    });
+
+    const response = await handler(endpoint.ownerRequest("Bearer valid-token"));
+    assert(response.status !== 401 && response.status !== 403, "matching owner must not receive an auth rejection");
+  });
+}
+
+Deno.test("feedback-workout scopes activity_id lookup to the authenticated athlete", async () => {
+  const operations: QueryState[] = [];
+  const handler = createFeedbackWorkoutHandler({
+    requireUser: createGuard([]),
+    getAdmin: () => createAdmin(operations, (state) => {
+      if (state.table === "activities") {
+        return { data: null, error: { code: "PGRST116" } };
+      }
+      return { data: null, error: null };
+    }),
+  });
+
+  const response = await handler(jsonRequest(
+    "https://example.test/feedback-workout",
+    "POST",
+    { athlete_id: ATHLETE_A, activity_id: 123 },
+    "Bearer valid-token",
+  ));
+
+  assertEquals(response.status, 404);
+  assertEquals(operations[0].table, "activities");
+  assertEquals(operations[0].filters, [
+    ["id", 123],
+    ["athlete_id", ATHLETE_A],
+  ]);
+});
+
+Deno.test("feedback-workout does not consume or log failed provider bodies", async () => {
+  const providerResponse = new Response("sensitive-feedback-body", { status: 500 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createFeedbackWorkoutHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "activities") {
+          return {
+            data: {
+              id: 123,
+              distance: 5000,
+              elapsed_time: 1800,
+              average_heartrate: 150,
+              sport_type: "Run",
+              name: "Private workout name",
+            },
+            error: null,
+          };
+        }
+        if (state.table === "athlete_ai_profiles") {
+          return { data: { core_memory: { adlerian_profile: {} } }, error: null };
+        }
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-provider-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/feedback-workout",
+      "POST",
+      { athlete_id: ATHLETE_A, activity_id: 123 },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 200);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-feedback-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-feedback-body"), "provider body must not reach logs");
+    assert(!logText.includes("Private workout name"), "user content must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("check-milestones scopes activity_id lookup to the authenticated athlete", async () => {
+  const operations: QueryState[] = [];
+  const handler = createCheckMilestonesHandler({
+    requireUser: createGuard([]),
+    getAdmin: () => createAdmin(operations, (state) => {
+      if (state.table === "activities" && state.selected === "id") {
+        return { data: { id: 123 }, error: null };
+      }
+      if (state.table === "runner_identity_milestones") {
+        return { data: [], error: null };
+      }
+      return { data: [], error: null };
+    }),
+  });
+
+  const response = await handler(jsonRequest(
+    "https://example.test/check-milestones",
+    "POST",
+    { athlete_id: ATHLETE_A, activity_id: 123 },
+    "Bearer valid-token",
+  ));
+
+  assertEquals(response.status, 200);
+  assertEquals(operations[0].table, "activities");
+  assertEquals(operations[0].filters, [
+    ["id", 123],
+    ["athlete_id", ATHLETE_A],
+  ]);
+});
+
+Deno.test("sync-beta rejects unbounded and invalid workloads before service access", async () => {
+  const invalidBodies = [
+    { user_id: ATHLETE_A, max_activities: 0 },
+    { user_id: ATHLETE_A, max_activities: -1 },
+    { user_id: ATHLETE_A, max_activities: 1.5 },
+    { user_id: ATHLETE_A, max_activities: 501 },
+    { user_id: ATHLETE_A, max_activities: 10, sync_all: true },
+  ];
+
+  for (const body of invalidBodies) {
+    let adminCalls = 0;
+    const handler = createSyncBetaHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => {
+        adminCalls += 1;
+        return createAdmin([]);
+      },
+    });
+    const response = await handler(
+      jsonRequest("https://example.test/sync-beta", "POST", body, "Bearer valid-token"),
+    );
+    const payload = await response.json();
+    assertEquals(response.status, 400);
+    assertEquals(payload.error.code, "INVALID_REQUEST");
+    assertEquals(adminCalls, 0);
+  }
+});
+
+Deno.test("sync-beta does not consume or log failed Strava token refresh bodies", async () => {
+  const providerResponse = new Response("sensitive-refresh-body", { status: 401 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createSyncBetaHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "athletes") {
+          return {
+            data: {
+              id: ATHLETE_A,
+              access_token: "expired-access-token",
+              refresh_token: "test-refresh-token",
+              token_expires_at: "2000-01-01T00:00:00.000Z",
+              strava_connected: true,
+            },
+            error: null,
+          };
+        }
+        return { data: [], error: null };
+      }),
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/sync-beta",
+      "POST",
+      { user_id: ATHLETE_A, max_activities: 1 },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 401);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-refresh-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-refresh-body"), "provider body must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("sync-beta does not consume or log failed Strava activity bodies", async () => {
+  const providerResponse = new Response("sensitive-activity-body", { status: 503 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createSyncBetaHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "athletes") {
+          return {
+            data: {
+              id: ATHLETE_A,
+              access_token: "valid-access-token",
+              refresh_token: "test-refresh-token",
+              token_expires_at: "2999-01-01T00:00:00.000Z",
+              strava_connected: true,
+            },
+            error: null,
+          };
+        }
+        if (state.table === "activity_types") {
+          return { data: [], error: null };
+        }
+        return { data: [], error: null };
+      }),
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/sync-beta",
+      "POST",
+      { user_id: ATHLETE_A, max_activities: 1 },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-activity-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-activity-body"), "provider body must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("backfill-splits rejects invalid workloads before service access", async () => {
+  for (const limit of [0, -1, 1.5, 101]) {
+    let adminCalls = 0;
+    const handler = createBackfillSplitsHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => {
+        adminCalls += 1;
+        return createAdmin([]);
+      },
+    });
+    const response = await handler(
+      jsonRequest("https://example.test/backfill-splits", "POST", {
+        athlete_id: ATHLETE_A,
+        limit,
+      }, "Bearer valid-token"),
+    );
+    const payload = await response.json();
+    assertEquals(response.status, 400);
+    assertEquals(payload.error.code, "INVALID_REQUEST");
+    assertEquals(adminCalls, 0);
+  }
+});
+
+Deno.test("journal supports path and query athlete IDs and clamps limits", async () => {
+  const operations: QueryState[] = [];
+  const guardCalls: Array<number | null> = [];
+  const handler = createJournalHandler({
+    requireUser: createGuard(guardCalls),
+    getAdmin: () => createAdmin(operations),
+  });
+
+  const pathResponse = await handler(new Request(
+    `https://example.test/journal/${ATHLETE_A}?limit=999`,
+    { headers: { Authorization: "Bearer valid-token" } },
+  ));
+  const queryResponse = await handler(new Request(
+    `https://example.test/journal?athlete_id=${ATHLETE_A}&limit=-5`,
+    { headers: { Authorization: "Bearer valid-token" } },
+  ));
+
+  assertEquals(pathResponse.status, 200);
+  assertEquals(queryResponse.status, 200);
+  assertEquals(guardCalls, [ATHLETE_A, ATHLETE_A]);
+  assertEquals(operations.map((operation) => operation.limit), [100, 1]);
+});
+
+Deno.test("journal generate-recent caps client work at four weeks", async () => {
+  const operations: QueryState[] = [];
+  const handler = createJournalHandler({
+    requireUser: createGuard([]),
+    getAdmin: () => createAdmin(operations),
+  });
+
+  const response = await handler(jsonRequest(
+    "https://example.test/journal/generate-recent",
+    "POST",
+    { athlete_id: ATHLETE_A, weeks: 100 },
+    "Bearer valid-token",
+  ));
+
+  assertEquals(response.status, 200);
+  assertEquals(operations.filter((operation) => operation.table === "activities").length, 4);
+});
+
+Deno.test("journal does not consume or log failed provider bodies", async () => {
+  const providerResponse = new Response("sensitive-journal-body", { status: 502 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createJournalHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "activities") {
+          return {
+            data: [{
+              activity_date: "2026-08-24T10:00:00.000Z",
+              name: "Private journal workout",
+              distance: 5000,
+              moving_time: 1800,
+              average_heart_rate: 150,
+              elevation_gain: 20,
+            }],
+            error: null,
+          };
+        }
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-provider-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/journal/generate",
+      "POST",
+      { athlete_id: ATHLETE_A, week_start_date: "2026-08-24" },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-journal-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-journal-body"), "provider body must not reach logs");
+    assert(!logText.includes("Private journal workout"), "user content must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("identity-profile does not consume or log failed provider bodies", async () => {
+  const providerResponse = new Response("sensitive-identity-body", { status: 429 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createIdentityProfileHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "activities") return { data: [], error: null };
+        if (state.table === "athlete_ai_profiles" && state.selected === "core_memory") {
+          return { data: { core_memory: {} }, error: null };
+        }
+        if (state.table === "running_goals") return { data: null, error: null };
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-provider-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/identity-profile",
+      "POST",
+      {
+        athlete_id: ATHLETE_A,
+        why_i_run: "Private reason",
+        core_values: ["Private value"],
+      },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 200);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-identity-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-identity-body"), "provider body must not reach logs");
+    assert(!logText.includes("Private reason"), "user content must not reach logs");
+    assert(!logText.includes("Private value"), "user content must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("user-races rejects missing and invalid tokens before service access", async () => {
+  for (const authorization of [undefined, "Bearer invalid-token"]) {
+    let adminCalls = 0;
+    let providerCalls = 0;
+    const handler = createUserRacesHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => {
+        adminCalls += 1;
+        return createAdmin([]);
+      },
+      getEnv: () => "test-provider-credential",
+      fetch: async () => {
+        providerCalls += 1;
+        throw new Error("provider fetch must not run");
+      },
+    });
+    const response = await handler(new Request("https://example.test/user-races", {
+      headers: authorization ? { Authorization: authorization } : undefined,
+    }));
+    assertEquals(response.status, 401);
+    assertEquals(adminCalls, 0);
+    assertEquals(providerCalls, 0);
+  }
+});
+
+Deno.test("backfill-splits does not consume or log failed Strava refresh bodies", async () => {
+  const operations: QueryState[] = [];
+  const providerResponse = new Response("sensitive-provider-body", { status: 500 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createBackfillSplitsHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin(operations, (state) => {
+        if (state.table === "activities") {
+          return { data: [{ id: 123 }], error: null };
+        }
+        if (state.table === "athletes") {
+          return { data: { refresh_token: "test-refresh-token" }, error: null };
+        }
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-client-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/backfill-splits",
+      "POST",
+      { athlete_id: ATHLETE_A, limit: 1 },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-provider-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-provider-body"), "provider body must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("backfill-splits sanitizes service database errors", async () => {
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createBackfillSplitsHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "activities") {
+          return {
+            data: null,
+            error: { message: "sensitive-database-error", details: "secret database details" },
+          };
+        }
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-client-credential",
+      fetch: async () => {
+        throw new Error("provider fetch must not run");
+      },
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/backfill-splits",
+      "POST",
+      { athlete_id: ATHLETE_A, limit: 1 },
+      "Bearer valid-token",
+    ));
+    const payload = await response.json();
+    const responseText = JSON.stringify(payload);
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(payload, {
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "Internal server error",
+      },
+    });
+    assert(!responseText.includes("sensitive-database-error"), "database error must not reach the response");
+    assert(!responseText.includes("secret database details"), "database details must not reach the response");
+    assert(!logText.includes("sensitive-database-error"), "database error must not reach logs");
+    assert(!logText.includes("secret database details"), "database details must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("user-races does not consume or log failed provider bodies", async () => {
+  const providerResponse = new Response("sensitive-runsignup-body", { status: 400 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createUserRacesHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([]),
+      getEnv: () => "test-provider-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/user-races?action=token",
+      "POST",
+      { code: "test-code", redirect_uri: "runaway://oauth" },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-runsignup-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-runsignup-body"), "provider body must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("user-races stores exchanged credentials on the verified athlete base row", async () => {
+  const operations: QueryState[] = [];
+  const handler = createUserRacesHandler({
+    requireUser: createGuard([]),
+    getAdmin: () => createAdmin(operations, () => ({ data: null, error: null })),
+    getEnv: () => "test-provider-credential",
+    fetch: async () => new Response(JSON.stringify({
+      access_token: "test-access-token",
+      refresh_token: "test-refresh-token",
+      expires_in: 3600,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }),
+  });
+
+  const response = await handler(jsonRequest(
+    "https://example.test/user-races?action=token",
+    "POST",
+    { code: "test-code", redirect_uri: "runaway://oauth" },
+    "Bearer valid-token",
+  ));
+
+  assertEquals(response.status, 200);
+  assertEquals(operations.length, 1);
+  assertEquals(operations[0].table, "athletes");
+  assertEquals(operations[0].filters, [["id", ATHLETE_A]]);
+  assert(!operations.some((operation) => operation.table === "profiles"), "credentials must never use profiles");
+});
+
+Deno.test("user-races reads credentials from the verified athlete without returning them", async () => {
+  const operations: QueryState[] = [];
+  const handler = createUserRacesHandler({
+    requireUser: createGuard([]),
+    getAdmin: () => createAdmin(operations, (state) => {
+      if (state.table === "athletes") {
+        return {
+          data: {
+            runsignup_access_token: "test-access-token",
+            runsignup_refresh_token: "test-refresh-token",
+            runsignup_token_expires_at: "2999-01-01T00:00:00.000Z",
+          },
+          error: null,
+        };
+      }
+      return { data: null, error: null };
+    }),
+    getEnv: () => "test-provider-credential",
+    fetch: async () => new Response(JSON.stringify({ races: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  });
+
+  const response = await handler(new Request("https://example.test/user-races", {
+    headers: { Authorization: "Bearer valid-token" },
+  }));
+  const responseText = await response.text();
+
+  assertEquals(response.status, 200);
+  assertEquals(operations[0].table, "athletes");
+  assertEquals(operations[0].filters, [["id", ATHLETE_A]]);
+  assert(!operations.some((operation) => operation.table === "profiles"), "credentials must never use profiles");
+  assert(!responseText.includes("test-access-token"), "credential values must not be returned");
+  assert(!responseText.includes("test-refresh-token"), "credential values must not be returned");
+}
+);

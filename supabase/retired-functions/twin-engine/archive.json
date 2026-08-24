@@ -1,0 +1,12 @@
+{
+  "slug": "twin-engine",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase functions download --use-api",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "4c3556a83fd61ef194a6e5095cef85b85e313d0d30de4de6586ce6acf63a2894",
+  "verify_jwt": false,
+  "restore_policy": "blocked-pending-security-review",
+  "file_count": 2,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

@@ -1,0 +1,12 @@
+{
+  "slug": "fix-elevation-stl",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase get_edge_function",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "664201f042431a486e6ce906a08397e842b3ef4a2be233982dd6aa4ef01a148a",
+  "verify_jwt": false,
+  "restore_policy": "blocked-pending-security-review",
+  "file_count": 1,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

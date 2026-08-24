@@ -2,13 +2,14 @@
 // Runs nightly via cron, authenticated with API key + secret
 
 import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
-import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
+import { corsHeaders, handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import type {
   RunSignUpRace,
   RunSignUpApiResponse,
   RaceDirectoryEvent,
   SyncRaceDirectoryResponse,
 } from "../_shared/types.ts";
+import { createSyncRaceDirectoryHandler } from "./handler.ts";
 
 const RUNSIGNUP_BASE_URL = "https://runsignup.com/rest/races";
 const RESULTS_PER_PAGE = 100;
@@ -120,21 +121,8 @@ async function upsertBatch(
   return data?.length || 0;
 }
 
-Deno.serve(async (req: Request) => {
-  const corsResponse = handleCors(req);
-  if (corsResponse) return corsResponse;
-
-  if (req.method !== "POST") {
-    return errorResponse("Method not allowed", 405);
-  }
-
+export const handler = createSyncRaceDirectoryHandler(async (_req: Request) => {
   try {
-    // Verify service role authorization
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return errorResponse("Missing authorization header", 401);
-    }
-
     const supabase = getSupabaseAdmin();
 
     const today = new Date();
@@ -262,4 +250,8 @@ Deno.serve(async (req: Request) => {
       500
     );
   }
-});
+}, { headers: corsHeaders });
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

@@ -38,5 +38,3 @@ SELECT cron.schedule(
 
 -- To unschedule (if needed):
 -- SELECT cron.unschedule('fetch-daily-articles');
-
-COMMENT ON FUNCTION cron.schedule IS 'Daily article fetch scheduled for 6 AM UTC - pre-fetches running articles for instant app loading';

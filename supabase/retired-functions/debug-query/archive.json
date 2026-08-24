@@ -1,0 +1,12 @@
+{
+  "slug": "debug-query",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase get_edge_function",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "4e6a2b5c5085a5befcffcfc4b4ca420d7425cb452614b4e9d0114d2e108d2189",
+  "verify_jwt": false,
+  "restore_policy": "blocked-pending-security-review",
+  "file_count": 1,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

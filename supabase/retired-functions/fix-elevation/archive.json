@@ -1,0 +1,12 @@
+{
+  "slug": "fix-elevation",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase get_edge_function",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "f53a5eaf95a38e1ac1423fb73263b4d23d9267f8c472cb32c82abf5d7bd69ccc",
+  "verify_jwt": false,
+  "restore_policy": "blocked-pending-security-review",
+  "file_count": 1,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

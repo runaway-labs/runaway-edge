@@ -1,0 +1,12 @@
+{
+  "slug": "ultratracker",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase functions download --use-api",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "cd52753fd39cc6211da32bf3e9e83f4a8973913df19f78b07e8803472354b556",
+  "verify_jwt": true,
+  "restore_policy": "blocked-pending-security-review",
+  "file_count": 2,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

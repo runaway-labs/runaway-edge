@@ -1,12 +1,28 @@
 // Supabase Edge Function: journal
 // Generate AI-powered training journal entries
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import {
+  parseLegacyAthleteId,
+  resolveUserEndpointDependencies,
+  userGuardErrorResponse,
+  type UserEndpointDependencies,
+} from '../_shared/user-endpoint.ts'
 
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
+interface JournalDependencies extends UserEndpointDependencies {
+  fetch: typeof fetch
+  getEnv: (name: string) => string | undefined
+}
 
-Deno.serve(async (req) => {
+export function createHandler(overrides: Partial<JournalDependencies> = {}) {
+  const userDeps = resolveUserEndpointDependencies(overrides)
+  const deps: JournalDependencies = {
+    ...userDeps,
+    fetch: overrides.fetch ?? globalThis.fetch,
+    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
+  }
+
+  return async (req: Request) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -17,18 +33,22 @@ Deno.serve(async (req) => {
 
   // POST /journal/generate - Generate journal for a week
   if (req.method === 'POST' && pathParts[pathParts.length - 1] === 'generate') {
-    return await handleGenerate(req)
+    return await handleGenerate(req, deps)
   }
 
   // POST /journal/generate-recent - Generate for multiple weeks
   if (req.method === 'POST' && pathParts[pathParts.length - 1] === 'generate-recent') {
-    return await handleGenerateRecent(req)
+    return await handleGenerateRecent(req, deps)
   }
 
-  // GET /journal/:athlete_id - Get journal entries
-  if (req.method === 'GET' && pathParts.length >= 2) {
-    const athleteId = pathParts[pathParts.length - 1]
-    return await handleGetEntries(athleteId, url.searchParams.get('limit'))
+  // GET /journal/:athlete_id and GET /journal?athlete_id=:athlete_id
+  if (req.method === 'GET') {
+    const journalIndex = pathParts.lastIndexOf('journal')
+    const pathAthleteId = journalIndex >= 0 && pathParts.length > journalIndex + 1
+      ? pathParts[journalIndex + 1]
+      : null
+    const athleteId = url.searchParams.get('athlete_id') ?? pathAthleteId
+    return await handleGetEntries(req, athleteId, url.searchParams.get('limit'), deps)
   }
 
   return new Response(
@@ -38,13 +58,20 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     }
   )
-})
+  }
+}
 
-async function handleGenerate(req: Request) {
+if (import.meta.main) {
+  Deno.serve(createHandler())
+}
+
+async function handleGenerate(req: Request, deps: JournalDependencies) {
   try {
     const { athlete_id, week_start_date } = await req.json()
+    const requestedAthleteId = parseLegacyAthleteId(athlete_id)
+    const context = await deps.requireUser(req, requestedAthleteId)
 
-    if (!athlete_id) {
+    if (requestedAthleteId === null) {
       return new Response(
         JSON.stringify({
           error: {
@@ -75,25 +102,23 @@ async function handleGenerate(req: Request) {
     const weekEnd = new Date(weekStart)
     weekEnd.setDate(weekStart.getDate() + 7)
 
-    console.log('Generating journal:', { athlete_id, weekStart: weekStart.toISOString() })
+    const athleteId = context.athleteId
+    console.log('Generating journal:', { athlete_id: athleteId, weekStart: weekStart.toISOString() })
 
-    // Create Supabase client
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    const supabaseAdmin = deps.getAdmin()
 
     // Get activities for the week
     const { data: activities, error: activitiesError } = await supabaseAdmin
       .from('activities')
       .select('*')
-      .eq('athlete_id', athlete_id)
+      .eq('athlete_id', athleteId)
       .gte('activity_date', weekStart.toISOString())
       .lt('activity_date', weekEnd.toISOString())
       .order('activity_date', { ascending: true })
 
     if (activitiesError) {
-      throw new Error(`Error fetching activities: ${activitiesError.message}`)
+      console.error('JOURNAL_ACTIVITY_LOOKUP_FAILED', { operation: 'activity_lookup' })
+      throw new Error('JOURNAL_ACTIVITY_LOOKUP_FAILED')
     }
 
     if (!activities || activities.length === 0) {
@@ -140,11 +165,12 @@ Total: ${activities.length} activities, ${totalDistance.toFixed(1)}km, ${Math.ro
 `
 
     // Call Anthropic API to generate journal
-    const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    const anthropicApiKey = deps.getEnv('ANTHROPIC_API_KEY') ?? ''
+    const anthropicResponse = await deps.fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY || '',
+        'x-api-key': anthropicApiKey,
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
@@ -167,9 +193,11 @@ Be encouraging but honest. Focus on patterns, consistency, and progression.`,
     })
 
     if (!anthropicResponse.ok) {
-      const errorData = await anthropicResponse.text()
-      console.error('Anthropic API error:', errorData)
-      throw new Error(`Anthropic API error: ${anthropicResponse.status}`)
+      console.error('ANTHROPIC_JOURNAL_FAILED', {
+        operation: 'journal_generation',
+        status: anthropicResponse.status,
+      })
+      throw new Error('ANTHROPIC_JOURNAL_FAILED')
     }
 
     const anthropicData = await anthropicResponse.json()
@@ -177,7 +205,7 @@ Be encouraging but honest. Focus on patterns, consistency, and progression.`,
 
     // Store journal in database
     const journalEntry = {
-      athlete_id,
+      athlete_id: athleteId,
       week_start: weekStart.toISOString(),
       week_end: weekEnd.toISOString(),
       content: journalText,
@@ -195,11 +223,11 @@ Be encouraging but honest. Focus on patterns, consistency, and progression.`,
       .single()
 
     if (insertError) {
-      console.error('Error storing journal:', insertError)
+      console.error('JOURNAL_WRITE_FAILED', { operation: 'journal_write' })
       // Continue even if storage fails
     }
 
-    console.log('Journal generated successfully:', { athlete_id, activities: activities.length })
+    console.log('Journal generated successfully:', { athlete_id: athleteId, activities: activities.length })
 
     return new Response(
       JSON.stringify({
@@ -212,12 +240,15 @@ Be encouraging but honest. Focus on patterns, consistency, and progression.`,
     )
 
   } catch (error) {
-    console.error('Error generating journal:', error)
+    const guardResponse = userGuardErrorResponse(error, corsHeaders)
+    if (guardResponse) return guardResponse
+
+    console.error('JOURNAL_GENERATE_UNEXPECTED_ERROR', { operation: 'journal_generate' })
     return new Response(
       JSON.stringify({
         error: {
           code: 'INTERNAL_ERROR',
-          message: error.message
+          message: 'Internal server error'
         }
       }),
       {
@@ -228,11 +259,13 @@ Be encouraging but honest. Focus on patterns, consistency, and progression.`,
   }
 }
 
-async function handleGenerateRecent(req: Request) {
+async function handleGenerateRecent(req: Request, deps: JournalDependencies) {
   try {
     const { athlete_id, weeks = 4 } = await req.json()
+    const requestedAthleteId = parseLegacyAthleteId(athlete_id)
+    const context = await deps.requireUser(req, requestedAthleteId)
 
-    if (!athlete_id) {
+    if (requestedAthleteId === null) {
       return new Response(
         JSON.stringify({
           error: {
@@ -247,12 +280,17 @@ async function handleGenerateRecent(req: Request) {
       )
     }
 
-    console.log('Generating recent journals:', { athlete_id, weeks })
+    const requestedWeeks = Number(weeks)
+    const weeksToGenerate = Number.isInteger(requestedWeeks)
+      ? Math.min(4, Math.max(1, requestedWeeks))
+      : 4
+
+    console.log('Generating recent journals:', { athlete_id: context.athleteId, weeks: weeksToGenerate })
 
     const generatedEntries = []
     const today = new Date()
 
-    for (let i = weeks - 1; i >= 0; i--) {
+    for (let i = weeksToGenerate - 1; i >= 0; i--) {
       const dayOfWeek = today.getDay()
       const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
       const weekStart = new Date(today)
@@ -262,20 +300,27 @@ async function handleGenerateRecent(req: Request) {
       try {
         const generateReq = new Request('http://localhost/generate', {
           method: 'POST',
+          headers: {
+            Authorization: context.authorization,
+            'Content-Type': 'application/json'
+          },
           body: JSON.stringify({
-            athlete_id,
+            athlete_id: context.athleteId,
             week_start_date: weekStart.toISOString().split('T')[0]
           })
         })
 
-        const response = await handleGenerate(generateReq)
+        const response = await handleGenerate(generateReq, deps)
         const data = await response.json()
 
         if (data.success && data.journal) {
           generatedEntries.push(data.journal)
         }
-      } catch (error) {
-        console.warn('Failed to generate journal for week:', weekStart.toISOString(), error.message)
+      } catch {
+        console.warn('JOURNAL_RECENT_WEEK_FAILED', {
+          operation: 'journal_generate_recent',
+          weekStart: weekStart.toISOString(),
+        })
       }
     }
 
@@ -291,12 +336,15 @@ async function handleGenerateRecent(req: Request) {
     )
 
   } catch (error) {
-    console.error('Error generating recent journals:', error)
+    const guardResponse = userGuardErrorResponse(error, corsHeaders)
+    if (guardResponse) return guardResponse
+
+    console.error('JOURNAL_RECENT_UNEXPECTED_ERROR', { operation: 'journal_generate_recent' })
     return new Response(
       JSON.stringify({
         error: {
           code: 'INTERNAL_ERROR',
-          message: error.message
+          message: 'Internal server error'
         }
       }),
       {
@@ -307,27 +355,42 @@ async function handleGenerateRecent(req: Request) {
   }
 }
 
-async function handleGetEntries(athleteIdStr: string, limitStr: string | null) {
+async function handleGetEntries(
+  req: Request,
+  athleteIdStr: string | null,
+  limitStr: string | null,
+  deps: JournalDependencies,
+) {
   try {
-    const athlete_id = parseInt(athleteIdStr)
-    const limit = limitStr ? parseInt(limitStr) : 10
+    const requestedAthleteId = parseLegacyAthleteId(athleteIdStr)
+    const context = await deps.requireUser(req, requestedAthleteId)
 
-    console.log('Fetching journal entries:', { athlete_id, limit })
+    if (requestedAthleteId === null) {
+      return new Response(
+        JSON.stringify({ error: { code: 'INVALID_REQUEST', message: 'athlete_id is required' } }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    const parsedLimit = limitStr === null ? 10 : Number(limitStr)
+    const limit = Number.isInteger(parsedLimit)
+      ? Math.min(100, Math.max(1, parsedLimit))
+      : 10
+
+    console.log('Fetching journal entries:', { athlete_id: context.athleteId, limit })
+
+    const supabaseAdmin = deps.getAdmin()
 
     const { data: entries, error } = await supabaseAdmin
       .from('training_journals')
       .select('*')
-      .eq('athlete_id', athlete_id)
+      .eq('athlete_id', context.athleteId)
       .order('week_start', { ascending: false })
       .limit(limit)
 
     if (error) {
-      throw new Error(`Error fetching journals: ${error.message}`)
+      console.error('JOURNAL_ENTRY_LOOKUP_FAILED', { operation: 'journal_entry_lookup' })
+      throw new Error('JOURNAL_ENTRY_LOOKUP_FAILED')
     }
 
     return new Response(
@@ -342,12 +405,15 @@ async function handleGetEntries(athleteIdStr: string, limitStr: string | null) {
     )
 
   } catch (error) {
-    console.error('Error fetching journal entries:', error)
+    const guardResponse = userGuardErrorResponse(error, corsHeaders)
+    if (guardResponse) return guardResponse
+
+    console.error('JOURNAL_GET_UNEXPECTED_ERROR', { operation: 'journal_get' })
     return new Response(
       JSON.stringify({
         error: {
           code: 'INTERNAL_ERROR',
-          message: error.message
+          message: 'Internal server error'
         }
       }),
       {

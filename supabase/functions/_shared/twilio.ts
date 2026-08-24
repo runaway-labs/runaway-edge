@@ -1,8 +1,15 @@
 // Pre-Race Alerts MVP: Twilio SMS Wrapper
 
-import { DeliveryResult } from "./types.ts";
+import type { DeliveryResult } from "./types.ts";
 
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01/Accounts";
+
+export type BeforeProviderSubmit = () => Promise<void>;
+
+export interface SmsSenderDependencies {
+  getEnv(name: string): string | undefined;
+  fetch: typeof fetch;
+}
 
 interface TwilioMessageResponse {
   sid: string;
@@ -11,69 +18,96 @@ interface TwilioMessageResponse {
   error_message: string | null;
 }
 
-export async function sendSms(
-  to: string,
-  body: string
-): Promise<DeliveryResult> {
-  const accountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
-  const authToken = Deno.env.get("TWILIO_AUTH_TOKEN");
-  const fromNumber = Deno.env.get("TWILIO_PHONE_NUMBER");
+export function createSmsSender(dependencies: SmsSenderDependencies) {
+  return async function sendSms(
+    to: string,
+    body: string,
+    beforeSubmit: BeforeProviderSubmit,
+  ): Promise<DeliveryResult> {
+    const accountSid = dependencies.getEnv("TWILIO_ACCOUNT_SID");
+    const authToken = dependencies.getEnv("TWILIO_AUTH_TOKEN");
+    const fromNumber = dependencies.getEnv("TWILIO_PHONE_NUMBER");
 
-  if (!accountSid || !authToken || !fromNumber) {
-    return {
-      success: false,
-      error: "Missing Twilio configuration (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER)",
-    };
-  }
-
-  // Normalize phone number - ensure it has country code
-  const normalizedTo = normalizePhoneNumber(to);
-
-  if (!normalizedTo) {
-    return {
-      success: false,
-      error: `Invalid phone number: ${to}`,
-    };
-  }
-
-  const url = `${TWILIO_API_BASE}/${accountSid}/Messages.json`;
-
-  const formData = new URLSearchParams();
-  formData.append("To", normalizedTo);
-  formData.append("From", fromNumber);
-  formData.append("Body", body);
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Authorization": `Basic ${btoa(`${accountSid}:${authToken}`)}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: formData.toString(),
-    });
-
-    const data: TwilioMessageResponse = await response.json();
-
-    if (!response.ok || data.error_code) {
+    if (!accountSid || !authToken || !fromNumber) {
       return {
         success: false,
-        error: data.error_message ?? `Twilio error: ${response.status}`,
+        error: "Missing Twilio configuration",
+        retryable: true,
+        outcome: "pre_provider_failure",
       };
     }
 
-    return {
-      success: true,
-      provider_message_id: data.sid,
-    };
-  } catch (error) {
-    console.error("Error sending SMS via Twilio:", error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Unknown error sending SMS",
-    };
-  }
+    const normalizedTo = normalizePhoneNumber(to);
+
+    if (!normalizedTo) {
+      return {
+        success: false,
+        error: "Invalid phone number",
+        retryable: true,
+        outcome: "pre_provider_failure",
+      };
+    }
+
+    const url = `${TWILIO_API_BASE}/${accountSid}/Messages.json`;
+
+    const formData = new URLSearchParams();
+    formData.append("To", normalizedTo);
+    formData.append("From", fromNumber);
+    formData.append("Body", body);
+
+    try {
+      await beforeSubmit();
+    } catch {
+      return {
+        success: false,
+        error: "Unable to begin provider submission",
+        retryable: true,
+        outcome: "pre_provider_failure",
+      };
+    }
+
+    try {
+      const response = await dependencies.fetch(url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: formData.toString(),
+      });
+
+      const data: TwilioMessageResponse = await response.json();
+
+      if (!response.ok || data.error_code) {
+        return {
+          success: false,
+          error: data.error_message ?? `Twilio rejected the request (${response.status})`,
+          retryable: false,
+          outcome: "provider_rejected",
+        };
+      }
+
+      return {
+        success: true,
+        provider_message_id: data.sid,
+        retryable: false,
+        outcome: "accepted",
+      };
+    } catch {
+      return {
+        success: false,
+        error: "Twilio submission outcome is unknown",
+        retryable: false,
+        outcome: "ambiguous_submission",
+      };
+    }
+  };
 }
+
+export const sendSms = createSmsSender({
+  getEnv: (name) => Deno.env.get(name),
+  fetch: (input, init) => fetch(input, init),
+});
 
 // Normalize phone number to E.164 format
 function normalizePhoneNumber(phone: string): string | null {
