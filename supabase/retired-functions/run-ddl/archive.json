@@ -3,7 +3,9 @@
   "project_ref": "nkxvjcdxiyjbndjvfmqy",
   "source": "read-only Supabase get_edge_function",
   "reviewed_at": "2026-08-24",
-  "bundle_sha256": "e6bf7dcedab8d3faf174d1894a2bfc1ab856c5ab7e605f0405770b6842d440a9",
+  "bundle_sha256": "ac9d54ec64b273c8ddf7d294693557461df22eed57851540b963dbf0e7b4c793",
+  "verify_jwt": false,
+  "restore_policy": "blocked-pending-security-review",
   "file_count": 1,
   "secret_scan": "passed",
   "retirement_status": "approved"

@@ -105,3 +105,14 @@ views, anonymous privileged RPCs, or a global JWT bypass.
 - Retirement recovery coverage: 10/10 approved-retirement functions have reviewed, secret-scanned source archives under `supabase/retired-functions/`; no retirement target is unarchived.
 - Task 8 remains blocked for the three `unknown-blocker` functions (`twin-engine`, `ultratracker`, `upload-race-course`) and until the fail-closed live preflight obtains complete live hashes for every function and all schema/cron/trigger checks pass.
 - Archive fidelity exception: full `git diff --cached --check` reports pre-existing trailing whitespace in byte-preserved live archives for `debug-query`, `fix-elevation-stl`, `kill-research`, and `list-cron`. These bytes are intentionally unchanged so archive hashes remain valid; the active-file check excludes only `supabase/retired-functions/**`.
+
+## Remaining-finding closure
+
+- Reviewed-baseline enforcement now rejects null or missing active baselines in `deploy`, `pre`, and `post`; the exact unresolved Task 8 blockers remain `backfill-splits`, `check-milestones`, `feedback-workout`, `generate-run-cues`, and `identity-profile`.
+- Bundle hashing canonicalizes local, downloaded, and archived roots to paths relative to the functions bundle. Byte-identical cross-root bundles hash equally; changed bytes hash differently.
+- Live inventory now requires exact grant data for all eight protected user RPC signatures and fails on an omitted signature, omitted grant field, missing function, anonymous EXECUTE, or missing authenticated/service-role EXECUTE.
+- Read-only deployed metadata confirmed `verify_jwt=false` for all ten approved-retirement functions. Every manifest entry and `archive.json` records that value plus `restore_policy=blocked-pending-security-review`.
+- Archived utilities are documented as retired, non-runnable recovery evidence. No archive implies automatic restoration; restoration requires a dedicated security review.
+- Focused bounded suite: Node 24 native TypeScript stripping with the local Deno compatibility harness, `18 passed; 0 failed`.
+- Static check: `git diff --check`, exit 0.
+- Production mutations: none.

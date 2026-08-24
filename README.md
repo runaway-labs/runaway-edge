@@ -93,7 +93,6 @@ Encouragement-first coaching surfaces backed by an identity model. See `agent/me
 | Function | Description |
 |----------|-------------|
 | `max-data` | Fetch max data values for an athlete |
-| `run-ddl` | Execute DDL statements (admin) |
 | `check-webhook-config` | Verify webhook configuration |
 | `import-runners` | Bulk runner import |
 | `check-hooks` / `check-hooks2` | Hook validation |
@@ -209,7 +208,10 @@ authorize rollout.
 
 Recoverable reviewed sources for every approved retirement are under
 `supabase/retired-functions/`. These archives are outside the active deployment
-directory and are checked for embedded credential literals and hash integrity.
+directory, are retired and non-runnable, and are checked for embedded credential
+literals and hash integrity. They are recovery evidence only: restoration is
+blocked pending a dedicated security review, with explicit safe authentication
+and authorization required before any archived utility could become active.
 
 ## Import Pattern
 

@@ -76,3 +76,13 @@
 - Task 8 deletion/deployment remains blocked until unknown functions are resolved and a complete live preflight passes, including live bundle hashes and Tasks 1/4/5 schema, cron, and trigger assumptions.
 - No production mutation occurred.
 - Preserved source bytes mean the full cached whitespace check reports historical trailing whitespace in four retirement archives; active Task 6 paths pass when the archive tree alone is excluded.
+
+### 2026-08-24 Task 6 remaining-finding closure
+
+- Hard-failed null reviewed bundle baselines in every audit mode and pinned the five unresolved baseline slugs as explicit Task 8 blockers.
+- Canonicalized bundle-relative paths across active checkout, downloaded live bundles, and retirement archives; refreshed archive hashes without changing archived source bytes.
+- Expanded live protected-RPC inventory to all eight signatures with complete anon/authenticated/service-role grant assertions.
+- Recorded read-only deployed `verify_jwt=false` and `blocked-pending-security-review` restore policy for all ten retirement entries and archives.
+- Removed `run-ddl` from active README inventory and labeled archives retired/non-runnable.
+- Bounded focused suite passed 18/18; `git diff --check` passed.
+- No production mutation occurred.

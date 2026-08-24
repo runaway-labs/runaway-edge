@@ -9,6 +9,7 @@ export interface ManifestEntry {
   verifyJwt?: boolean;
   baselineBundleSha256?: string | null;
   archiveBundleSha256?: string;
+  restorePolicy?: "blocked-pending-security-review";
 }
 export interface FunctionInventory {
   slug: string;
@@ -28,6 +29,13 @@ export interface DeploymentInventory {
   };
   cronTargets: { jobName: string; target: string }[];
   triggerTargets: { triggerName: string; target: string }[];
+  privilegedRpcs: Array<{
+    signature: string;
+    exists: boolean;
+    anonExecute: boolean;
+    authenticatedExecute: boolean;
+    serviceRoleExecute: boolean;
+  }>;
 }
 
 export interface FunctionConfig {
@@ -43,7 +51,13 @@ export interface RepositorySnapshot {
   bundleErrors: string[];
   migrationSource: string;
   workflowSource: string;
-  archives: Map<string, { bundleHash?: string; secretSafe: boolean; fileCount: number }>;
+  archives: Map<string, {
+    bundleHash?: string;
+    secretSafe: boolean;
+    fileCount: number;
+    verifyJwt?: boolean;
+    restorePolicy?: string;
+  }>;
 }
 
 export interface DriftReport {
@@ -68,10 +82,14 @@ const active = (
 const retirement = (
   slug: string,
   archiveBundleSha256: string,
+  verifyJwt: boolean,
+  restorePolicy: "blocked-pending-security-review",
 ): ManifestEntry => ({
   slug,
   classification: "approved-retirement",
   archiveBundleSha256,
+  verifyJwt,
+  restorePolicy,
 });
 
 const unknown = (
@@ -126,16 +144,16 @@ export const FUNCTION_MANIFEST: ManifestEntry[] = [
   active("sync-race-directory", "internal", false, "46a365262ecece6644f8a9467d51459a877518d2336a184aba0cff9850fa291a"),
   active("training-plan", "user", true, "01b12e6492d3f3f425d1d9d20be69910eff9e626e27fb0aef1a5c0fae7c1e8b0"),
   active("user-races", "user", true, "c827ed7b5e3da374a79c3f6e4efe7dcab4a4cc88ed5302787917630f48a9d215"),
-  retirement("backfill-training-zones", "320e0d0003b43c7a743f425df6c5ce882736567ac97108551640dfd88dc2e48c"),
-  retirement("data-sci-audit", "fb232f4c135819dfd1989eb22dbb3a586d285c743e080229e10395d741cd1eb3"),
-  retirement("debug-query", "7431cff884fcdde2b18284eb352b37d6a2a66d84b40ea8f62942e95a29c903cd"),
-  retirement("fix-elevation", "72f36596a76188eb350c93b96ae98523020629f3788d623cfe9a23588d2d6bdb"),
-  retirement("fix-elevation-stl", "9b284f469f0eee2044234c8b82a900d887867e155a5c7cb6d1b789deacabc18e"),
-  retirement("kill-cron", "e905fe60d116928655c4010047497ffe6c6ea00c61c85ad10edbc30b613f6376"),
-  retirement("kill-research", "eb3d42597cfba2b0f1b6dba75e30da55530899f1e831f6a5c253b4e598cd0770"),
-  retirement("list-cron", "88818f966f9f637e2e9b185036467860775393a35a202998de0eb20c01c0e382"),
-  retirement("pre-run-brief", "56bed14cb4e4479d0ba596f7c4e507ab8615629f03af3d59016a05452d0af5a4"),
-  retirement("run-ddl", "e6bf7dcedab8d3faf174d1894a2bfc1ab856c5ab7e605f0405770b6842d440a9"),
+  retirement("backfill-training-zones", "6a8a7c80bba8c10bebf4df8fdc0bfd4b9d79be49072e6781e71bdfff7564d7d1", false, "blocked-pending-security-review"),
+  retirement("data-sci-audit", "d54be8867712fd1d9477311191ffbb994591301aa2e71c6c7f613393eb678911", false, "blocked-pending-security-review"),
+  retirement("debug-query", "4e6a2b5c5085a5befcffcfc4b4ca420d7425cb452614b4e9d0114d2e108d2189", false, "blocked-pending-security-review"),
+  retirement("fix-elevation", "f53a5eaf95a38e1ac1423fb73263b4d23d9267f8c472cb32c82abf5d7bd69ccc", false, "blocked-pending-security-review"),
+  retirement("fix-elevation-stl", "664201f042431a486e6ce906a08397e842b3ef4a2be233982dd6aa4ef01a148a", false, "blocked-pending-security-review"),
+  retirement("kill-cron", "163e73b4f6547152cbd7f091377e193c8c11d8638ca16ab5877f42293cfee61b", false, "blocked-pending-security-review"),
+  retirement("kill-research", "4857d2f509e2778a9bc0db7313122399278957a35eb8d7ab66fc8eff35001301", false, "blocked-pending-security-review"),
+  retirement("list-cron", "89eb52fed794b69ece00cae6a00edf606cfb75b3edfafd51b092881ce16ed6e4", false, "blocked-pending-security-review"),
+  retirement("pre-run-brief", "05e5a78556777a6c13f496233ff265617351110457815142863a428acd53c286", false, "blocked-pending-security-review"),
+  retirement("run-ddl", "ac9d54ec64b273c8ddf7d294693557461df22eed57851540b963dbf0e7b4c793", false, "blocked-pending-security-review"),
   unknown("twin-engine", "7ae504e861032806e3f23cec1e0bb5090ec8f9075a8034c23354ae61f8911d57"),
   unknown("ultratracker", "42421ceb4fa6c554ad009df99ae87e9c7dbfac2a2bdf37cf696cbad6ccd373f7"),
   unknown("upload-race-course", "2634990ba81632a3292cd3680fc095695ddee75c9183d31d4f928e16cd880c4b"),
@@ -186,6 +204,17 @@ const EXPECTED_TRIGGERS = [
   ["on_activity_insert:public.activities", "notify-activity-insert"],
 ];
 
+export const PRIVILEGED_RPC_SIGNATURES = [
+  "public.best_split_pr(bigint,integer,double precision,double precision)",
+  "public.check_onboarding_status(integer)",
+  "public.detect_rest_days(integer,integer)",
+  "public.ensure_athlete_exists(uuid,text)",
+  "public.get_consecutive_rest_days(integer,date)",
+  "public.get_current_week_plan(bigint)",
+  "public.get_rest_day_history(integer,integer)",
+  "public.get_rest_days_count(integer,date,date)",
+];
+
 const SECRET_PATTERNS: Array<[string, RegExp]> = [
   ["JWT literal", /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/],
   ["Supabase secret literal", /\bsb_secret_[A-Za-z0-9_-]{10,}/],
@@ -210,6 +239,15 @@ function normalizePath(path: string): string {
     else parts.push(part);
   }
   return parts.join("/");
+}
+
+export function canonicalBundlePath(path: string): string {
+  const normalized = normalizePath(path);
+  const marker = "supabase/functions/";
+  const markerIndex = normalized.indexOf(marker);
+  if (markerIndex >= 0) return normalized.slice(markerIndex + marker.length);
+  if (normalized.startsWith("functions/")) return normalized.slice("functions/".length);
+  return normalized;
 }
 
 function dirname(path: string): string {
@@ -267,9 +305,15 @@ function resolveImport(
 }
 
 export async function hashFiles(files: Map<string, string>): Promise<string> {
+  const canonicalFiles = new Map<string, string>();
+  for (const [path, content] of files) {
+    const canonicalPath = canonicalBundlePath(path);
+    if (canonicalFiles.has(canonicalPath)) throw new Error("duplicate canonical bundle path: " + canonicalPath);
+    canonicalFiles.set(canonicalPath, content);
+  }
   const chunks: string[] = [];
-  for (const path of sorted(files.keys())) {
-    const content = files.get(path)!;
+  for (const path of sorted(canonicalFiles.keys())) {
+    const content = canonicalFiles.get(path)!;
     chunks.push(path + "\0" + new TextEncoder().encode(content).length + "\0" + content);
   }
   const digest = await crypto.subtle.digest(
@@ -323,6 +367,7 @@ function requireInventoryShape(inventory: DeploymentInventory | undefined): stri
   if (!inventory.schema?.assumptions || typeof inventory.schema.assumptions !== "object") errors.push("inventory schema.assumptions section is missing");
   if (!Array.isArray(inventory.cronTargets)) errors.push("inventory cronTargets section is missing");
   if (!Array.isArray(inventory.triggerTargets)) errors.push("inventory triggerTargets section is missing");
+  if (!Array.isArray(inventory.privilegedRpcs)) errors.push("inventory privilegedRpcs section is missing");
   return errors;
 }
 
@@ -401,6 +446,9 @@ export async function auditDeployment(
   errors.push(...missingConfig.map((slug) => slug + ": missing config.toml function section"));
 
   for (const entry of activeEntries) {
+    if (typeof entry.baselineBundleSha256 !== "string" || entry.baselineBundleSha256.length === 0) {
+      errors.push(entry.slug + ": reviewed live baseline bundle hash is missing; Task 8 is blocked");
+    }
     const config = repository.config.get(entry.slug);
     if (config && config.verifyJwt === undefined) errors.push(entry.slug + ": config verify_jwt is missing");
     else if (config && config.verifyJwt !== entry.verifyJwt) errors.push(entry.slug + ": config verify_jwt=" + config.verifyJwt + ", expected " + entry.verifyJwt);
@@ -418,6 +466,10 @@ export async function auditDeployment(
     if (archive.fileCount === 0) errors.push(entry.slug + ": retirement archive is empty");
     if (!archive.bundleHash) errors.push(entry.slug + ": retirement archive bundle hash is missing");
     else if (archive.bundleHash !== entry.archiveBundleSha256) errors.push(entry.slug + ": retirement archive bundle hash mismatch");
+    if (entry.verifyJwt === undefined) errors.push(entry.slug + ": retirement manifest verify_jwt is missing");
+    else if (archive.verifyJwt !== entry.verifyJwt) errors.push(entry.slug + ": retirement archive verify_jwt does not match reviewed deployed flag");
+    if (!entry.restorePolicy) errors.push(entry.slug + ": retirement manifest restore_policy is missing");
+    else if (archive.restorePolicy !== entry.restorePolicy) errors.push(entry.slug + ": retirement archive restore_policy mismatch");
   }
 
   const expectedLive = new Set(
@@ -455,7 +507,7 @@ export async function auditDeployment(
     if (!deployed.bundle_sha256) errors.push(entry.slug + ": complete live bundle hash is missing");
 
     if (mode === "deploy") {
-      if (entry.baselineBundleSha256 && deployed.bundle_sha256 !== entry.baselineBundleSha256) {
+      if (entry.classification === "expected-active" && entry.baselineBundleSha256 && deployed.bundle_sha256 !== entry.baselineBundleSha256) {
         errors.push(entry.slug + ": reviewed live baseline bundle hash mismatch");
       }
       if (entry.classification === "approved-retirement" && deployed.bundle_sha256 !== entry.archiveBundleSha256) {
@@ -467,6 +519,9 @@ export async function auditDeployment(
       if (!localHash || deployed.bundle_sha256 !== localHash) errors.push(entry.slug + ": deployed bundle does not match local deployable bundle");
     } else if (entry.classification === "approved-retirement" && mode === "pre") {
       if (deployed.bundle_sha256 !== entry.archiveBundleSha256) errors.push(entry.slug + ": pre-retirement live bundle does not match archive");
+    }
+    if (entry.classification === "approved-retirement" && deployed.verify_jwt !== entry.verifyJwt) {
+      errors.push(entry.slug + ": retirement deployed verify_jwt=" + deployed.verify_jwt + ", expected reviewed flag " + entry.verifyJwt);
     }
   }
 
@@ -485,6 +540,25 @@ export async function auditDeployment(
   errors.push(...setDifference(requiredAssumptions, assumptionNames).map((name) => "schema assumption missing: " + name));
   errors.push(...setDifference(assumptionNames, requiredAssumptions).map((name) => "unexpected schema assumption: " + name));
   for (const name of REQUIRED_SCHEMA_ASSUMPTIONS) if (assumptions[name] !== true) errors.push("schema assumption failed: " + name);
+
+  const rpcInventory = inventory.privilegedRpcs ?? [];
+  const rpcSignatures = rpcInventory.map((rpc) => rpc.signature);
+  if (new Set(rpcSignatures).size !== rpcSignatures.length) errors.push("privileged RPC inventory contains duplicate signatures");
+  const actualRpcSignatures = new Set(rpcSignatures);
+  const expectedRpcSignatures = new Set(PRIVILEGED_RPC_SIGNATURES);
+  errors.push(...setDifference(expectedRpcSignatures, actualRpcSignatures).map((signature) => "privileged RPC inventory missing " + signature));
+  errors.push(...setDifference(actualRpcSignatures, expectedRpcSignatures).map((signature) => "privileged RPC inventory unexpected " + signature));
+  for (const rpc of rpcInventory) {
+    if (typeof rpc.exists !== "boolean" || typeof rpc.anonExecute !== "boolean" ||
+      typeof rpc.authenticatedExecute !== "boolean" || typeof rpc.serviceRoleExecute !== "boolean") {
+      errors.push(rpc.signature + ": privileged RPC signature/grant data is incomplete");
+      continue;
+    }
+    if (!rpc.exists) errors.push(rpc.signature + ": protected RPC signature does not exist");
+    if (rpc.anonExecute) errors.push(rpc.signature + ": anon retains EXECUTE on protected RPC");
+    if (!rpc.authenticatedExecute) errors.push(rpc.signature + ": authenticated EXECUTE grant is missing");
+    if (!rpc.serviceRoleExecute) errors.push(rpc.signature + ": service_role EXECUTE grant is missing");
+  }
 
   errors.push(...comparePairs("cron inventory", (inventory.cronTargets ?? []).map((entry) => [entry.jobName, entry.target]), EXPECTED_CRON as Array<[string, string]>));
   errors.push(...comparePairs("trigger inventory", (inventory.triggerTargets ?? []).map((entry) => [entry.triggerName, entry.target]), EXPECTED_TRIGGERS as Array<[string, string]>));
@@ -529,12 +603,24 @@ async function readRepository(root: string): Promise<RepositorySnapshot> {
     if (bundle.hash) bundleHashes.set(entry.slug, bundle.hash);
   }
 
-  const archives = new Map<string, { bundleHash?: string; secretSafe: boolean; fileCount: number }>();
+  const archives = new Map<string, {
+    bundleHash?: string;
+    secretSafe: boolean;
+    fileCount: number;
+    verifyJwt?: boolean;
+    restorePolicy?: string;
+  }>();
   const archiveRoot = root + "/supabase/retired-functions";
   try {
     for await (const entry of Deno.readDir(archiveRoot)) {
       if (!entry.isDirectory) continue;
       const files = await readTree(archiveRoot + "/" + entry.name + "/bundle");
+      let metadata: Record<string, unknown> = {};
+      try {
+        metadata = JSON.parse(await Deno.readTextFile(archiveRoot + "/" + entry.name + "/archive.json"));
+      } catch {
+        // Required metadata fields below fail closed.
+      }
       let secretSafe = true;
       for (const content of files.values()) {
         if (SECRET_PATTERNS.some(([, pattern]) => pattern.test(content))) secretSafe = false;
@@ -543,6 +629,8 @@ async function readRepository(root: string): Promise<RepositorySnapshot> {
         bundleHash: files.size > 0 ? await hashFiles(files) : undefined,
         secretSafe,
         fileCount: files.size,
+        verifyJwt: typeof metadata.verify_jwt === "boolean" ? metadata.verify_jwt : undefined,
+        restorePolicy: typeof metadata.restore_policy === "string" ? metadata.restore_policy : undefined,
       });
     }
   } catch {
@@ -570,6 +658,10 @@ async function attachRemoteBundleHashes(
   }
 }
 
+const PRIVILEGED_RPC_VALUES_SQL = PRIVILEGED_RPC_SIGNATURES
+  .map((signature) => "('" + signature.replaceAll("'", "''") + "')")
+  .join(",");
+
 const LIVE_INVENTORY_SQL = [
   "select 'migration'::text as kind, version::text as key, null::text as value, true as passed from supabase_migrations.schema_migrations",
   "union all select 'column', table_schema || '.' || table_name, column_name, true from information_schema.columns where (table_schema, table_name) in (('public','profiles'),('public','athletes'),('private','oauth_states'))",
@@ -579,7 +671,8 @@ const LIVE_INVENTORY_SQL = [
   "union all select 'assumption','user_views_security_invoker_and_scoped',null, (select bool_and('security_invoker=true'=any(coalesce(c.reloptions,array[]::text[])) and not has_table_privilege('anon','public.'||c.relname,'select') and has_table_privilege('authenticated','public.'||c.relname,'select')) from pg_class c where c.oid in ('public.activity_summary'::regclass,'public.conversation_summaries'::regclass,'public.monthly_activity_stats'::regclass,'public.recent_journal_entries'::regclass))",
   "union all select 'assumption','analytics_views_service_only',null, (select bool_and(not has_table_privilege('anon','public.'||c.relname,'select') and not has_table_privilege('authenticated','public.'||c.relname,'select') and has_table_privilege('service_role','public.'||c.relname,'select')) from pg_class c where c.oid in ('public.analytics_activity_funnel'::regclass,'public.analytics_activity_hours'::regclass,'public.analytics_audio_coaching'::regclass,'public.analytics_daily_summary'::regclass,'public.analytics_user_engagement'::regclass))",
   "union all select 'assumption','weekly_training_plans_owner_scoped',null, not exists(select 1 from pg_policies where schemaname='public' and tablename='weekly_training_plans' and policyname='Authenticated read access') and exists(select 1 from pg_policies where schemaname='public' and tablename='weekly_training_plans' and policyname='Users can read own plans')",
-  "union all select 'assumption','privileged_rpcs_anon_revoked',null, not has_function_privilege('anon','public.ensure_athlete_exists(uuid,text)','execute')",
+  `union all select 'privileged_rpc',v.signature,json_build_object('exists',to_regprocedure(v.signature) is not null,'anon_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('anon',v.signature,'execute') end,'authenticated_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('authenticated',v.signature,'execute') end,'service_role_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('service_role',v.signature,'execute') end)::text,true from (values ${PRIVILEGED_RPC_VALUES_SQL}) v(signature)`,
+  `union all select 'assumption','privileged_rpcs_anon_revoked',null,coalesce((select bool_and(to_regprocedure(v.signature) is not null and not has_function_privilege('anon',v.signature,'execute')) from (values ${PRIVILEGED_RPC_VALUES_SQL}) v(signature)),false)`,
   "union all select 'assumption','athlete_rpcs_owner_guarded',null, exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='private' and p.proname='current_user_owns_athlete')",
   "union all select 'assumption','internal_delivery_schema',null, (select count(*)=5 from information_schema.columns where table_schema='public' and table_name='alert_deliveries' and column_name in ('attempt_count','processing_started_at','claim_generation','lease_expires_at','idempotency_key'))",
   "union all select 'assumption','internal_job_rpcs_service_only',null, to_regprocedure('public.claim_pending_deliveries(integer)') is not null and not has_function_privilege('anon','public.claim_pending_deliveries(integer)','execute')",
@@ -622,6 +715,7 @@ async function fetchLiveInventory(
     schema: { columns: {}, assumptions: {} },
     cronTargets: [],
     triggerTargets: [],
+    privilegedRpcs: [],
   };
   for (const row of rows) {
     if (row.kind === "migration") inventory.migrations.push({ version: row.key });
@@ -629,6 +723,16 @@ async function fetchLiveInventory(
     else if (row.kind === "assumption") inventory.schema.assumptions[row.key] = row.passed === true;
     else if (row.kind === "cron") inventory.cronTargets.push({ jobName: row.key, target: String(row.value) });
     else if (row.kind === "trigger") inventory.triggerTargets.push({ triggerName: row.key, target: String(row.value) });
+    else if (row.kind === "privileged_rpc") {
+      const grants = JSON.parse(String(row.value)) as Record<string, unknown>;
+      inventory.privilegedRpcs.push({
+        signature: row.key,
+        exists: grants.exists === true,
+        anonExecute: grants.anon_execute as boolean,
+        authenticatedExecute: grants.authenticated_execute as boolean,
+        serviceRoleExecute: grants.service_role_execute as boolean,
+      });
+    }
   }
   return inventory;
 }
