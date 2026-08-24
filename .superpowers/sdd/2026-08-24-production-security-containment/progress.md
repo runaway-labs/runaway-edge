@@ -27,7 +27,7 @@
 - [x] Task 2: Add a shared user-auth guard
 - [x] Task 3: Migrate user-facing Edge Functions
 - [x] Task 4: Protect internal jobs and make delivery idempotent
-- [ ] Task 5: Persist and consume OAuth state
+- [x] Task 5: Persist and consume OAuth state
 - [ ] Task 6: Eliminate deployment drift
 - [ ] Task 7: Update iOS callers for secured backend contracts
 - [ ] Task 8: Deploy, verify, and rotate credentials
@@ -45,3 +45,12 @@
 - Remaining P2 findings addressed: the normal claim path first fences expired `submitting` rows into terminal `ambiguous` manual-reconciliation state, advances their generation, and excludes them from automatic retry.
 - The pgTAP concurrency case now uses explicit remote `BEGIN`, claim, asynchronous lock-holding sleep, overlapping second claim, and `COMMIT`. Temporary result tables are explicitly readable by `service_role` before `SET LOCAL ROLE`.
 - P2 verification: safe TypeScript tests 21/21, syntax 13/13, pgTAP plan 44/44, reconciliation/concurrency/ownership static audits passed. Deno remains unavailable (exit 127); DB pgTAP remains not run because `TEST_DATABASE_URL` is unset and Docker is unavailable.
+
+## Task 5 implementation notes
+
+- OAuth initiation now requires `requireUser()` before request parsing or state creation, ignores caller-supplied auth identity, and binds state to the verified auth user and athlete relationship.
+- State is 32 cryptographically random bytes encoded as base64url. Only its SHA-256 digest is persisted in `private.oauth_states`, with a ten-minute TTL, provider and trusted redirect binding, service-role-only access, and atomic one-time consumption.
+- Strava and Garmin callbacks have gateway `verify_jwt = false`, but reject missing, malformed, expired, provider-mismatched, consumed, or replayed state with a sanitized `400` before code exchange or credential writes.
+- Garmin PKCE remains supported; its verifier is indexed by the state digest rather than plaintext state. Existing pre-deployment PKCE rows are not deleted or rewritten and naturally expire within their existing ten-minute TTL.
+- Safe local verification passed: OAuth state tests 8/8, TypeScript syntax 6/6, pgTAP plan 36/36, and guard/callback/JWT/logging boundary checks. Deno is unavailable (exit 127); DB pgTAP was not run because `TEST_DATABASE_URL` is unset and Docker is unavailable.
+- Task 8 must apply `20260824162713_oauth_state_security.sql` and deploy all four OAuth functions/config as a coordinated rollout. No migration, deployment, secret provisioning, or live action occurred in Task 5.
