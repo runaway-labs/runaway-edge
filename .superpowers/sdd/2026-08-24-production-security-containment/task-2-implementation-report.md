@@ -30,7 +30,7 @@ user/athlete context.
 
 ## Commit
 
-Implementation commit SHA: recorded in the follow-up report update commit.
+Implementation commit SHA: `74bdb1042b53aefd03b3de3367f336b9c29f5bb6`.
 
 ## Residual risks
 
