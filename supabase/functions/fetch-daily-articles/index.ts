@@ -4,12 +4,10 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-
-// Initialize Supabase client with service role for database writes
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+import {
+  internalAuthErrorResponse,
+  requireInternal,
+} from '../_shared/require-internal.ts'
 
 // RSS Feed configuration
 interface RSSFeed {
@@ -259,7 +257,9 @@ async function fetchFeed(feed: RSSFeed): Promise<ArticleRecord[]> {
 }
 
 // Main fetch function
-async function fetchAllArticles(): Promise<{ inserted: number; updated: number; errors: string[] }> {
+async function fetchAllArticles(
+  supabase: ReturnType<typeof createClient>,
+): Promise<{ inserted: number; updated: number; errors: string[] }> {
   const errors: string[] = []
   let inserted = 0
   let updated = 0
@@ -310,11 +310,28 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  }
+
   try {
+    requireInternal(req)
+  } catch (error) {
+    return internalAuthErrorResponse(error, corsHeaders)
+  }
+
+  try {
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    )
     console.log('Starting daily article fetch...')
     const startTime = Date.now()
 
-    const result = await fetchAllArticles()
+    const result = await fetchAllArticles(supabase)
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1)
     console.log(`Completed in ${duration}s: ${result.inserted} articles processed`)

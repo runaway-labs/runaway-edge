@@ -3,6 +3,10 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { sendPush } from "../_shared/apns.ts";
+import {
+  internalAuthErrorResponse,
+  requireInternal,
+} from "../_shared/require-internal.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,6 +16,19 @@ const corsHeaders = {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  try {
+    requireInternal(req);
+  } catch (error) {
+    return internalAuthErrorResponse(error, corsHeaders);
   }
 
   try {
@@ -80,7 +97,7 @@ Deno.serve(async (req) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "X-Runaway-Internal-Secret": Deno.env.get("INTERNAL_JOB_SECRET")!,
       },
       body: JSON.stringify({ athlete_id: record.athlete_id, activity_id: record.id }),
     }).catch((err) => console.error("❌ Breakthrough trigger failed:", err));

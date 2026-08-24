@@ -66,7 +66,7 @@ export interface Alert {
   created_at: string;
 }
 
-export type DeliveryStatus = "pending" | "sent" | "delivered" | "failed";
+export type DeliveryStatus = "pending" | "processing" | "sent" | "delivered" | "retryable" | "failed";
 export type DeliveryChannel = "sms" | "email";
 
 export interface AlertDelivery {
@@ -76,6 +76,9 @@ export interface AlertDelivery {
   channel: DeliveryChannel;
   recipient: string;
   status: DeliveryStatus;
+  idempotency_key: string;
+  attempt_count: number;
+  processing_started_at: string | null;
   provider_message_id: string | null;
   error_message: string | null;
   sent_at: string | null;
@@ -174,6 +177,7 @@ export interface DeliveryResult {
   success: boolean;
   provider_message_id?: string;
   error?: string;
+  retryable?: boolean;
 }
 
 // RunSignUp API types

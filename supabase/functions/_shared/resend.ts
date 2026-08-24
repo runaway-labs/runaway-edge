@@ -12,7 +12,8 @@ interface ResendResponse {
 export async function sendEmail(
   to: string,
   subject: string,
-  body: string
+  body: string,
+  idempotencyKey: string,
 ): Promise<DeliveryResult> {
   const apiKey = Deno.env.get("RESEND_API_KEY");
   const fromEmail = Deno.env.get("FROM_EMAIL");
@@ -21,6 +22,7 @@ export async function sendEmail(
     return {
       success: false,
       error: "Missing Resend configuration (RESEND_API_KEY or FROM_EMAIL)",
+      retryable: false,
     };
   }
 
@@ -29,6 +31,7 @@ export async function sendEmail(
     return {
       success: false,
       error: `Invalid email address: ${to}`,
+      retryable: false,
     };
   }
 
@@ -38,6 +41,7 @@ export async function sendEmail(
       headers: {
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
       },
       body: JSON.stringify({
         from: fromEmail,
@@ -54,6 +58,7 @@ export async function sendEmail(
       return {
         success: false,
         error: data.message ?? `Resend error: ${response.status}`,
+        retryable: response.status === 409 || response.status === 429 || response.status >= 500,
       };
     }
 
@@ -66,6 +71,7 @@ export async function sendEmail(
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error sending email",
+      retryable: true,
     };
   }
 }

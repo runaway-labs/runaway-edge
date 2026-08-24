@@ -188,6 +188,11 @@ enabled = true
 verify_jwt = false  # Strava webhooks don't send JWT auth
 entrypoint = "./functions/strava-webhook/index.ts"
 
+[functions.notify-activity-insert]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/notify-activity-insert/index.ts"
+
 [functions.check-conditions]
 enabled = true
 verify_jwt = false
@@ -207,3 +212,18 @@ entrypoint = "./functions/max-data/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/breakthrough-milestones/index.ts"
+
+[functions.daily-research-brief]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/daily-research-brief/index.ts"
+
+[functions.fetch-daily-articles]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/fetch-daily-articles/index.ts"
+
+[functions.sync-race-directory]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/sync-race-directory/index.ts"

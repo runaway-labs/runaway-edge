@@ -2,9 +2,13 @@
 // Monitors weather/AQI for races in next 48h and triggers automatic alerts
 
 import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
-import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
+import { corsHeaders, handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import { getCurrentWeather } from "../_shared/weather-api.ts";
 import { getCurrentAqi } from "../_shared/aqi-api.ts";
+import {
+  internalAuthErrorResponse,
+  requireInternal,
+} from "../_shared/require-internal.ts";
 import {
   evaluateAllThresholds,
   getTriggeredThresholds,
@@ -28,6 +32,12 @@ Deno.serve(async (req: Request) => {
 
   if (req.method !== "POST") {
     return errorResponse("Method not allowed", 405);
+  }
+
+  try {
+    requireInternal(req);
+  } catch (error) {
+    return internalAuthErrorResponse(error, corsHeaders);
   }
 
   try {
@@ -245,8 +255,8 @@ async function processRace(
 function createDeliveries(
   alertId: string,
   runners: Runner[]
-): Omit<AlertDelivery, "id" | "created_at" | "updated_at" | "sent_at" | "provider_message_id" | "error_message">[] {
-  const deliveries: Omit<AlertDelivery, "id" | "created_at" | "updated_at" | "sent_at" | "provider_message_id" | "error_message">[] = [];
+): Omit<AlertDelivery, "id" | "created_at" | "updated_at" | "sent_at" | "provider_message_id" | "error_message" | "idempotency_key" | "attempt_count" | "processing_started_at">[] {
+  const deliveries: Omit<AlertDelivery, "id" | "created_at" | "updated_at" | "sent_at" | "provider_message_id" | "error_message" | "idempotency_key" | "attempt_count" | "processing_started_at">[] = [];
 
   for (const runner of runners) {
     const prefs = runner.notification_preferences;

@@ -2,13 +2,17 @@
 // Runs nightly via cron, authenticated with API key + secret
 
 import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
-import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
+import { corsHeaders, handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
 import type {
   RunSignUpRace,
   RunSignUpApiResponse,
   RaceDirectoryEvent,
   SyncRaceDirectoryResponse,
 } from "../_shared/types.ts";
+import {
+  internalAuthErrorResponse,
+  requireInternal,
+} from "../_shared/require-internal.ts";
 
 const RUNSIGNUP_BASE_URL = "https://runsignup.com/rest/races";
 const RESULTS_PER_PAGE = 100;
@@ -129,12 +133,12 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // Verify service role authorization
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return errorResponse("Missing authorization header", 401);
-    }
+    requireInternal(req);
+  } catch (error) {
+    return internalAuthErrorResponse(error, corsHeaders);
+  }
 
+  try {
     const supabase = getSupabaseAdmin();
 
     const today = new Date();

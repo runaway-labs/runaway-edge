@@ -26,8 +26,17 @@
 - [x] Task 1: Contain database views, RLS, and privileged RPCs
 - [x] Task 2: Add a shared user-auth guard
 - [x] Task 3: Migrate user-facing Edge Functions
-- [ ] Task 4: Protect internal jobs and make delivery idempotent
+- [x] Task 4: Protect internal jobs and make delivery idempotent
 - [ ] Task 5: Persist and consume OAuth state
 - [ ] Task 6: Eliminate deployment drift
 - [ ] Task 7: Update iOS callers for secured backend contracts
 - [ ] Task 8: Deploy, verify, and rotate credentials
+
+## Task 4 implementation notes
+
+- Internal handlers now require `X-Runaway-Internal-Secret` before body parsing or admin-client creation.
+- `private.claim_pending_deliveries(integer)` uses an atomic `FOR UPDATE SKIP LOCKED` claim, with a service-role-only public Data API wrapper.
+- Delivery rows persist a derived idempotency key and bounded `processing`, `retryable`, `sent`, and `failed` transitions.
+- Cron and activity-trigger callers read `internal_job_secret` from Vault at execution time; no secret value was generated or provisioned.
+- Task 8 remains the hard approval gate for Edge secret/Vault provisioning, migration application, function deployment, and production verification.
+- Local Deno execution was unavailable (`deno` is not installed), and pgTAP runtime execution was unavailable because `TEST_DATABASE_URL` is unset. Safe fallback/static results are recorded in `task-4-implementation-report.md`.
