@@ -1,5 +1,20 @@
 -- Fresh replay prerequisite for the service-only RunSignUp credential path.
 -- The public.profiles compatibility view intentionally remains credential-free.
+set lock_timeout = '5s';
+set statement_timeout = '5min';
+
+do $$
+begin
+  if to_regclass('public.athletes') is null then
+    raise exception 'missing dependency public.athletes';
+  end if;
+  if to_regclass('public.profiles') is null then
+    raise exception 'missing dependency public.profiles';
+  end if;
+  raise notice 'task8 evidence athletes rows=%', (select count(*) from public.athletes);
+end
+$$;
+
 alter table public.athletes
   add column if not exists runsignup_access_token text,
   add column if not exists runsignup_refresh_token text,

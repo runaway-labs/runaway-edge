@@ -1,0 +1,48 @@
+{
+  "checkpoint_date": "2026-08-24",
+  "production_writes": false,
+  "implementation_status": "complete_pending_remaining_local_verification",
+  "head_before_commit": "3932d8b3f129dedee2812b0543a6ce888e6d028e",
+  "verification": {
+    "node_deno_compatibility": {
+      "command": "node --experimental-strip-types /tmp/task8-deno-node-compat.mjs",
+      "timeout_seconds": 60,
+      "result": "pass",
+      "passed": 26,
+      "failed": 0
+    },
+    "supabase_start": {
+      "command": "supabase start",
+      "timeout_seconds": 180,
+      "result": "pass",
+      "exit_code": 0,
+      "details": "Clean local replay applied every migration, preserved absent live-only views without fabricating definitions, seeded local data, and reached healthy services."
+    },
+    "supabase_db_reset": {
+      "result": "not_run",
+      "reason": "Final checkpoint requested immediately after successful start."
+    },
+    "pgtap_security_containment": {
+      "result": "not_run"
+    },
+    "pgtap_internal_jobs": {
+      "result": "not_run"
+    },
+    "pgtap_oauth_state": {
+      "result": "not_run"
+    },
+    "pgtap_internal_callers_activation": {
+      "result": "not_run"
+    },
+    "native_deno": {
+      "result": "not_retried",
+      "prior_results": "npx acquisition hung and was interrupted with exit 130; offline package was not cached; user directed use of passing Node compatibility runner only."
+    }
+  },
+  "remaining_gates": [
+    "Run one bounded supabase db reset.",
+    "Run each pgTAP suite individually with bounded time.",
+    "Seed local Vault test secrets, apply final caller activation, run its pgTAP suite, and exercise fail-closed rollback.",
+    "Do not perform production rollout until Task 7 compatible-app release evidence and every production runbook gate are approved."
+  ]
+}

@@ -4,7 +4,9 @@ import {
   PRIVILEGED_RPC_SIGNATURES,
   SERVICE_ONLY_RPC_SIGNATURES,
   FUNCTION_MANIFEST,
+  ROLLOUT_COHORTS,
   auditDeployment,
+  auditActivationSources,
   auditMigrationSource,
   auditWorkflowSource,
   buildBundleHash,
@@ -24,7 +26,7 @@ function assertIncludes(errors: string[], fragment: string): void {
 const SAFE_WORKFLOW = [
   "npx --yes deno test --allow-read scripts/audit-deployment.test.ts",
   "npx --yes deno run scripts/audit-deployment.ts --mode deploy",
-  "supabase functions deploy --project-ref project",
+  "supabase functions deploy backfill-splits --project-ref project",
 ].join("\n");
 
 const MIGRATION = [
@@ -41,7 +43,9 @@ function manifest(includeUnknown = false): ManifestEntry[] {
       classification: "expected-active",
       authClass: "user",
       verifyJwt: true,
+      baselineVerifyJwt: true,
       baselineBundleSha256: "baseline-alpha",
+      rolloutCohort: "user",
     },
     {
       slug: "old",
@@ -87,11 +91,15 @@ function schema() {
       "public.activities": ["client_operation_id"],
       "private.oauth_states": ["state_hash", "provider", "auth_user_id", "athlete_id", "redirect_url", "expires_at", "consumed_at", "created_at"],
     },
-    assumptions: Object.fromEntries(REQUIRED_SCHEMA_ASSUMPTIONS.map((name) => [name, true])),
+    assumptions: {
+      ...Object.fromEntries(REQUIRED_SCHEMA_ASSUMPTIONS.map((name) => [name, true])),
+      internal_callers_inactive: true,
+      internal_callers_use_dedicated_secret: true,
+    },
   };
 }
 
-function inventory(mode: "deploy" | "pre" | "post" = "pre", includeUnknown = false): DeploymentInventory {
+function inventory(mode: "deploy" | "cohort-user" | "cohort-internal" | "cohort-oauth" | "pre" | "post" = "pre", includeUnknown = false): DeploymentInventory {
   const functions = [
     {
       slug: "alpha",
@@ -131,9 +139,9 @@ function inventory(mode: "deploy" | "pre" | "post" = "pre", includeUnknown = fal
       { jobName: "process-deliveries-job", target: "process-deliveries" },
       { jobName: "sync-race-directory-job", target: "sync-race-directory" },
     ],
-    triggerTargets: [
-      { triggerName: "on_activity_insert:public.activities", target: "notify-activity-insert" },
-    ],
+    triggerTargets: mode === "cohort-user" || mode === "cohort-internal"
+      ? []
+      : [{ triggerName: "runaway_activity_insert_internal:public.activities", target: "notify-activity-insert" }],
     privilegedRpcs: PRIVILEGED_RPC_SIGNATURES.map((signature) => ({
       signature,
       exists: true,
@@ -160,6 +168,80 @@ Deno.test("manifest explicitly classifies exactly 55 deployed slugs", () => {
   assert(counts["expected-active"] === 42, JSON.stringify(counts));
   assert(counts["approved-retirement"] === 13, JSON.stringify(counts));
   assert(counts["unknown-blocker"] === 0, JSON.stringify(counts));
+});
+
+Deno.test("containment rollout cohorts are exact and carry explicit JWT flags", () => {
+  assert(
+    JSON.stringify(ROLLOUT_COHORTS) === JSON.stringify({
+      user: [
+        "backfill-splits", "check-milestones", "feedback-workout", "identity-profile",
+        "journal", "sync-beta", "training-plan", "user-races",
+      ],
+      internal: [
+        "breakthrough-milestones", "check-conditions", "daily-research-brief",
+        "fetch-daily-articles", "notify-activity-insert", "process-deliveries",
+        "sync-race-directory",
+      ],
+      oauth: ["garmin-auth", "garmin-callback", "oauth-callback", "strava-auth"],
+    }),
+    "rollout cohorts changed unexpectedly: " + JSON.stringify(ROLLOUT_COHORTS),
+  );
+  const targetJwt = new Map(FUNCTION_MANIFEST.map((entry) => [entry.slug, entry.verifyJwt]));
+  for (const slug of ROLLOUT_COHORTS.user) assert(targetJwt.get(slug) === true, slug + " must require JWT");
+  for (const slug of ROLLOUT_COHORTS.internal) assert(targetJwt.get(slug) === false, slug + " must use dedicated internal auth");
+  assert(targetJwt.get("garmin-auth") === true, "garmin-auth must require JWT");
+  assert(targetJwt.get("strava-auth") === true, "strava-auth must require JWT");
+  assert(targetJwt.get("garmin-callback") === false, "garmin-callback must accept provider callback traffic");
+  assert(targetJwt.get("oauth-callback") === false, "oauth-callback must accept provider callback traffic");
+});
+
+Deno.test("staged audit compares approved cohorts to local and deferred functions to live baseline", async () => {
+  const entries: ManifestEntry[] = [
+    {
+      slug: "alpha",
+      classification: "expected-active",
+      authClass: "user",
+      verifyJwt: true,
+      baselineVerifyJwt: false,
+      baselineBundleSha256: "baseline-alpha",
+      rolloutCohort: "user",
+    },
+    {
+      slug: "beta",
+      classification: "expected-active",
+      authClass: "admin",
+      verifyJwt: true,
+      baselineVerifyJwt: false,
+      baselineBundleSha256: "baseline-beta",
+    },
+  ];
+  const repo = repository();
+  repo.sourceDirectories.add("beta");
+  repo.config.set("beta", { verifyJwt: true });
+  repo.bundleHashes.set("beta", "local-beta");
+  repo.archives.clear();
+  const value = inventory("cohort-user");
+  value.functions = [
+    { slug: "alpha", status: "ACTIVE", verify_jwt: true, ezbr_sha256: "meta-alpha", bundle_sha256: "local-alpha" },
+    { slug: "beta", status: "ACTIVE", verify_jwt: false, ezbr_sha256: "meta-beta", bundle_sha256: "baseline-beta" },
+  ];
+  const passed = await auditDeployment(value, repo, "cohort-user", entries);
+  assert(passed.errors.length === 0, passed.errors.join("\n"));
+
+  value.functions[1].bundle_sha256 = "local-beta";
+  value.functions[1].verify_jwt = true;
+  const drifted = await auditDeployment(value, repo, "cohort-user", entries);
+  assertIncludes(drifted.errors, "beta: deferred function no longer matches captured live baseline");
+});
+
+Deno.test("caller activation is split from base migration and includes fail-closed rollback", async () => {
+  const [base, activation, rollback] = await Promise.all([
+    Deno.readTextFile("supabase/migrations/20260824153216_secure_internal_jobs.sql"),
+    Deno.readTextFile("supabase/rollout/activate_internal_callers.sql"),
+    Deno.readTextFile("supabase/rollout/rollback_internal_callers.sql"),
+  ]);
+  const errors = auditActivationSources(base, activation, rollback);
+  assert(errors.length === 0, errors.join("\n"));
 });
 Deno.test("truncated function inventory and count mismatch fail closed", async () => {
   const value = inventory("pre");
@@ -347,6 +429,8 @@ Deno.test("fresh-replay migration adds typed athlete columns without touching pr
 Deno.test("workflow gate rejects global JWT bypass and audit-after-deploy ordering", () => {
   assertIncludes(auditWorkflowSource("supabase functions deploy --no-verify-jwt\nnpx --yes deno run audit-deployment.ts --mode deploy"), "--no-verify-jwt");
   assertIncludes(auditWorkflowSource("supabase functions deploy\nnpx --yes deno run audit-deployment.ts --mode deploy"), "audit must run before deployment");
+  assertIncludes(auditWorkflowSource(SAFE_WORKFLOW + "\nsupabase functions deploy --project-ref project"), "fleet deployment is forbidden");
+  assertIncludes(auditWorkflowSource(SAFE_WORKFLOW + "\nsupabase functions deploy mystery --project-ref project"), "unapproved function deployment target");
   assert(auditWorkflowSource(SAFE_WORKFLOW).length === 0, auditWorkflowSource(SAFE_WORKFLOW).join("\n"));
 });
 
@@ -367,4 +451,45 @@ Deno.test("README never presents archived utilities as active or runnable", asyn
   assert(readme.includes("blocked pending a dedicated security review"), "README must block automatic restoration");
   assert(!/migrations\/\s+#\s+\d+\s+PostgreSQL migrations/.test(readme), "README migration documentation must not hardcode a drifting count");
   assert(!/\[\d+\s+functions\]/.test(readme), "README function documentation must not hardcode a drifting count");
+});
+
+Deno.test("run-ddl has archive recovery evidence but no active source", async () => {
+  let activeSourceExists = true;
+  try {
+    await Deno.stat("supabase/functions/run-ddl/index.ts");
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) activeSourceExists = false;
+    else throw error;
+  }
+  assert(!activeSourceExists, "run-ddl must not remain deployable from supabase/functions");
+  const archive = JSON.parse(await Deno.readTextFile("supabase/retired-functions/run-ddl/archive.json"));
+  assert(archive.restore_policy === "blocked-pending-security-review", "run-ddl archive must remain restore-blocked");
+});
+
+Deno.test("production inventory strictly requires all captured live view definitions", async () => {
+  const candidate = inventory("pre");
+  delete candidate.schema.assumptions.live_view_definitions_match;
+  const result = await auditDeployment(candidate, repository(), "pre");
+  assert(
+    result.errors.includes("schema assumption missing: live_view_definitions_match"),
+    "missing live view definition evidence must block production preflight",
+  );
+});
+
+Deno.test("caller assumptions are stage-specific and fail closed", async () => {
+  const preActivation = inventory("cohort-user");
+  preActivation.schema.assumptions.internal_callers_inactive = false;
+  const preResult = await auditDeployment(preActivation, repository(), "cohort-user");
+  assert(
+    preResult.errors.includes("schema assumption failed: internal_callers_inactive"),
+    "pre-activation cohorts must require inactive callers",
+  );
+
+  const postActivation = inventory("pre");
+  postActivation.schema.assumptions.internal_callers_use_dedicated_secret = false;
+  const postResult = await auditDeployment(postActivation, repository(), "pre");
+  assert(
+    postResult.errors.includes("schema assumption failed: internal_callers_use_dedicated_secret"),
+    "post-activation audits must require dedicated-secret callers",
+  );
 });

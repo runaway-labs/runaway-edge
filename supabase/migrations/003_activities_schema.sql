@@ -73,11 +73,6 @@ CREATE INDEX IF NOT EXISTS idx_activities_athlete_date
 CREATE INDEX IF NOT EXISTS idx_activities_type
   ON activities(type);
 
--- Create index for recent activities (common query pattern)
-CREATE INDEX IF NOT EXISTS idx_activities_recent
-  ON activities(athlete_id, activity_date DESC)
-  WHERE activity_date > NOW() - INTERVAL '90 days';
-
 -- Function: Get athlete activity summary
 CREATE OR REPLACE FUNCTION get_athlete_activity_summary(
   p_athlete_id BIGINT,

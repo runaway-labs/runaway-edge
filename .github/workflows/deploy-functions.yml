@@ -1,18 +1,16 @@
 name: Deploy Edge Functions
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/deploy-functions.yml'
-      - 'scripts/audit-deployment.ts'
-      - 'scripts/audit-deployment.test.ts'
-      - 'supabase/config.toml'
-      - 'supabase/functions/**'
-      - 'supabase/migrations/**'
-      - 'supabase/retired-functions/**'
   workflow_dispatch:
+    inputs:
+      cohort:
+        description: Reviewed containment cohort to deploy
+        required: true
+        type: choice
+        options:
+          - user
+          - internal
+          - oauth
 
 jobs:
   deploy:
@@ -41,6 +39,30 @@ jobs:
       - name: Test fail-closed deployment audit
         run: npx --yes deno test --allow-read scripts/audit-deployment.test.ts
 
+      - name: Select reviewed rollout cohort
+        run: |
+          case "${{ inputs.cohort }}" in
+            user)
+              before_mode=deploy
+              after_mode=cohort-user
+              cohort_slugs="backfill-splits check-milestones feedback-workout identity-profile journal sync-beta training-plan user-races"
+              ;;
+            internal)
+              before_mode=cohort-user
+              after_mode=cohort-internal
+              cohort_slugs="breakthrough-milestones check-conditions daily-research-brief fetch-daily-articles notify-activity-insert process-deliveries sync-race-directory"
+              ;;
+            oauth)
+              before_mode=cohort-internal
+              after_mode=cohort-oauth
+              cohort_slugs="garmin-auth garmin-callback oauth-callback strava-auth"
+              ;;
+            *) exit 64 ;;
+          esac
+          echo "BEFORE_MODE=$before_mode" >> "$GITHUB_ENV"
+          echo "AFTER_MODE=$after_mode" >> "$GITHUB_ENV"
+          echo "COHORT_SLUGS=$cohort_slugs" >> "$GITHUB_ENV"
+
       - name: Download reviewed live bundles
         run: |
           remote_root="$RUNNER_TEMP/runaway-live-before"
@@ -57,18 +79,18 @@ jobs:
           done
           echo "REMOTE_BUNDLES_BEFORE=$remote_root" >> "$GITHUB_ENV"
 
-      - name: Audit reviewed baseline before deploy
+      - name: Audit reviewed state before cohort deploy
         run: |
           npx --yes deno run --allow-read --allow-env --allow-net \
             scripts/audit-deployment.ts \
-            --mode deploy \
+            --mode "$BEFORE_MODE" \
             --remote-bundles "$REMOTE_BUNDLES_BEFORE"
 
-      - name: Deploy config-classified edge functions
+      - name: Deploy only the reviewed cohort
         run: |
-          supabase functions deploy \
-            --project-ref "$SUPABASE_PROJECT_ID" \
-            --use-api
+          for function_slug in $COHORT_SLUGS; do
+            supabase functions deploy $function_slug --project-ref "$SUPABASE_PROJECT_ID" --use-api
+          done
 
       - name: Download deployed bundles for verification
         run: |
@@ -86,11 +108,11 @@ jobs:
           done
           echo "REMOTE_BUNDLES_AFTER=$remote_root" >> "$GITHUB_ENV"
 
-      - name: Verify deployed state before retirement
+      - name: Verify deployed cohort and deferred baselines
         run: |
           npx --yes deno run --allow-read --allow-env --allow-net \
             scripts/audit-deployment.ts \
-            --mode pre \
+            --mode "$AFTER_MODE" \
             --remote-bundles "$REMOTE_BUNDLES_AFTER"
 
       - name: Notify Deploy Result

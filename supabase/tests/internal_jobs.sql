@@ -82,29 +82,26 @@ select is(
 );
 
 select is(
-  (select count(*) from cron.job where jobname in (
-    'check-conditions-job', 'process-deliveries-job', 'sync-race-directory-job',
-    'daily-research-brief', 'fetch-daily-articles'
-  )),
-  5::bigint, 'all five internal HTTP cron callers are installed'
+  (select count(*) from cron.job where active and jobname in (
+      'check-conditions-job', 'process-deliveries-job', 'sync-race-directory-job',
+      'daily-research-brief', 'fetch-daily-articles'
+    )),
+  0::bigint, 'base migration leaves every internal HTTP cron caller inactive'
 );
 select is(
   (select count(*) from cron.job where jobname in (
-    'check-conditions-job', 'process-deliveries-job', 'sync-race-directory-job',
-    'daily-research-brief', 'fetch-daily-articles'
-  ) and position('private.require_internal_job_secret()' in command) > 0),
-  5::bigint, 'every cron caller validates Vault at execution time'
+      'check-conditions-job', 'process-deliveries-job', 'sync-race-directory-job',
+      'daily-research-brief', 'fetch-daily-articles'
+    ) and position('private.require_internal_job_secret()' in command) > 0),
+  0::bigint, 'base migration does not install dedicated-secret cron commands'
 );
 select is(
-  (select count(*) from cron.job where jobname in (
-    'check-conditions-job', 'process-deliveries-job', 'sync-race-directory-job',
-    'daily-research-brief', 'fetch-daily-articles'
-  ) and (position('Authorization' in command) > 0 or position('service_role' in command) > 0)),
-  0::bigint, 'cron has no bearer or service-role fallback'
+  (select count(*) from pg_trigger where tgrelid = 'public.activities'::regclass and not tgisinternal and tgname in ('activity-insert-notification', 'on_activity_insert', 'runaway_activity_insert_internal')),
+  0::bigint, 'base migration leaves no activity notification caller installed'
 );
 select ok(
   position('private.require_internal_job_secret()' in pg_get_functiondef('public.notify_activity_insert()'::regprocedure)) > 0,
-  'activity trigger validates Vault before HTTP'
+  'inactive activity caller function validates Vault before HTTP'
 );
 
 create temporary table task4_claim_results (

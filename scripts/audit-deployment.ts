@@ -1,13 +1,16 @@
-export type AuditMode = "deploy" | "pre" | "post";
+export type AuditMode = "deploy" | "cohort-user" | "cohort-internal" | "cohort-oauth" | "pre" | "post";
 export type Classification = "expected-active" | "approved-retirement" | "unknown-blocker";
 export type AuthClass = "user" | "provider" | "internal" | "admin";
+export type RolloutCohort = "user" | "internal" | "oauth";
 
 export interface ManifestEntry {
   slug: string;
   classification: Classification;
   authClass?: AuthClass;
   verifyJwt?: boolean;
+  baselineVerifyJwt?: boolean;
   baselineBundleSha256?: string | null;
+  rolloutCohort?: RolloutCohort;
   archiveBundleSha256?: string;
   restorePolicy?: "blocked-pending-security-review";
 }
@@ -73,6 +76,69 @@ export interface DriftReport {
   comparisons: Array<Record<string, unknown>>;
 }
 
+export const ROLLOUT_COHORTS: Record<RolloutCohort, string[]> = {
+  user: [
+    "backfill-splits", "check-milestones", "feedback-workout", "identity-profile",
+    "journal", "sync-beta", "training-plan", "user-races",
+  ],
+  internal: [
+    "breakthrough-milestones", "check-conditions", "daily-research-brief",
+    "fetch-daily-articles", "notify-activity-insert", "process-deliveries",
+    "sync-race-directory",
+  ],
+  oauth: ["garmin-auth", "garmin-callback", "oauth-callback", "strava-auth"],
+};
+
+const BASELINE_VERIFY_JWT: Record<string, boolean> = {
+  "activity-observations": false,
+  "backfill-splits": true,
+  "breakthrough-milestones": false,
+  chat: true,
+  "check-conditions": false,
+  "check-hooks": false,
+  "check-hooks2": false,
+  "check-milestones": true,
+  "check-webhook-config": false,
+  "classify-races": false,
+  "comprehensive-analysis": false,
+  "daily-brief": false,
+  "daily-research-brief": false,
+  "delete-account": false,
+  disconnect: false,
+  "feedback-workout": true,
+  "fetch-daily-articles": false,
+  "garmin-auth": false,
+  "garmin-callback": false,
+  "garmin-stats": false,
+  "garmin-webhook": false,
+  "generate-run-cues": true,
+  "generate-training-plan": true,
+  "get-race-course": false,
+  "goal-assessment": true,
+  "identity-profile": true,
+  "import-runners": false,
+  "job-status": false,
+  journal: false,
+  "max-data": false,
+  "micro-wins": false,
+  "notify-activity-insert": false,
+  "oauth-callback": false,
+  "process-deliveries": false,
+  "regenerate-training-plan": false,
+  "send-alert": false,
+  "strava-auth": false,
+  "strava-webhook": false,
+  "sync-beta": false,
+  "sync-race-directory": false,
+  "training-plan": false,
+  "user-races": false,
+};
+
+function rolloutCohort(slug: string): RolloutCohort | undefined {
+  return (Object.keys(ROLLOUT_COHORTS) as RolloutCohort[])
+    .find((cohort) => ROLLOUT_COHORTS[cohort].includes(slug));
+}
+
 const active = (
   slug: string,
   authClass: AuthClass,
@@ -83,7 +149,9 @@ const active = (
   classification: "expected-active",
   authClass,
   verifyJwt,
+  baselineVerifyJwt: BASELINE_VERIFY_JWT[slug] ?? verifyJwt,
   baselineBundleSha256,
+  rolloutCohort: rolloutCohort(slug),
 });
 
 const retirement = (
@@ -166,6 +234,7 @@ export const REQUIRED_MIGRATIONS = [
 ];
 
 export const REQUIRED_SCHEMA_ASSUMPTIONS = [
+  "live_view_definitions_match",
   "profiles_security_invoker_and_scoped",
   "user_views_security_invoker_and_scoped",
   "analytics_views_service_only",
@@ -174,7 +243,6 @@ export const REQUIRED_SCHEMA_ASSUMPTIONS = [
   "athlete_rpcs_owner_guarded",
   "internal_delivery_schema",
   "internal_job_rpcs_service_only",
-  "internal_callers_use_dedicated_secret",
   "oauth_states_secure",
   "oauth_state_rpcs_service_only",
   "garmin_oauth_tokens_service_only",
@@ -182,6 +250,9 @@ export const REQUIRED_SCHEMA_ASSUMPTIONS = [
   "profiles_credential_free",
   "activities_client_operation_id_contract",
 ];
+
+export const PRE_ACTIVATION_CALLER_ASSUMPTION = "internal_callers_inactive";
+export const POST_ACTIVATION_CALLER_ASSUMPTION = "internal_callers_use_dedicated_secret";
 
 const PROFILE_COLUMNS = [
   "id", "email", "full_name", "organization_name", "phone", "created_at", "updated_at",
@@ -202,7 +273,7 @@ const EXPECTED_CRON = [
   ["sync-race-directory-job", "sync-race-directory"],
 ];
 const EXPECTED_TRIGGERS = [
-  ["on_activity_insert:public.activities", "notify-activity-insert"],
+  ["runaway_activity_insert_internal:public.activities", "notify-activity-insert"],
 ];
 
 export const PRIVILEGED_RPC_SIGNATURES = [
@@ -414,9 +485,44 @@ export function auditWorkflowSource(source: string): string[] {
   if (auditIndex < 0) errors.push("workflow is missing the fail-closed drift audit");
   if (deployIndex < 0) errors.push("workflow is missing the function deployment");
   if (auditIndex >= 0 && deployIndex >= 0 && auditIndex > deployIndex) errors.push("workflow audit must run before deployment");
-  if (!source.includes("--mode deploy")) errors.push("workflow must use the pre-deploy audit mode");
+  if (!source.includes("--mode deploy") && !source.includes("before_mode=deploy")) errors.push("workflow must use the pre-deploy audit mode");
   if (!source.includes("npx --yes deno test")) errors.push("workflow is missing audit tests");
+  const approved = new Set(Object.values(ROLLOUT_COHORTS).flat());
+  for (const match of source.matchAll(/supabase functions deploy(?:\s+([^\s\\]+))?/g)) {
+    const target = match[1];
+    if (!target || target.startsWith("--")) errors.push("workflow fleet deployment is forbidden; every deploy must name one approved function");
+    else if (!target.startsWith("$") && !approved.has(target)) errors.push("workflow has unapproved function deployment target " + target);
+  }
   return errors;
+}
+
+export function auditActivationSources(base: string, activation: string, rollback: string): string[] {
+  const errors: string[] = [];
+  if (/create\s+trigger\s+\S+\s+after\s+insert\s+on\s+public\.activities/i.test(base)) {
+    errors.push("base migration must not install the activity caller trigger");
+  }
+  if (/cron\.schedule\s*\([\s\S]*?\/functions\/v1\//i.test(base)) {
+    errors.push("base migration must not install HTTP cron callers");
+  }
+  for (const marker of [
+    "task8.endpoints_verified", "internal_job_secret", "supabase_url",
+    "runaway_activity_insert_internal", "cron.alter_job",
+  ]) {
+    if (!activation.includes(marker)) errors.push("activation script is missing " + marker);
+  }
+  for (const legacy of ["activity-insert-notification", "on_activity_insert"]) {
+    if (!activation.includes(legacy)) errors.push("activation script does not remove legacy caller " + legacy);
+  }
+  if (!rollback.includes("active := false")) errors.push("rollback must disable internal cron callers");
+  if (!rollback.includes("runaway_activity_insert_internal")) errors.push("rollback must remove the dedicated activity trigger");
+  return errors;
+}
+
+function deployedCohorts(mode: AuditMode): Set<RolloutCohort> {
+  if (mode === "cohort-user") return new Set(["user"]);
+  if (mode === "cohort-internal") return new Set(["user", "internal"]);
+  if (["cohort-oauth", "pre", "post"].includes(mode)) return new Set(["user", "internal", "oauth"]);
+  return new Set();
 }
 
 export async function auditDeployment(
@@ -444,6 +550,7 @@ export async function auditDeployment(
   const retirementEntries = manifest.filter((entry) => entry.classification === "approved-retirement");
   const unknownEntries = manifest.filter((entry) => entry.classification === "unknown-blocker");
   const activeSlugs = new Set(activeEntries.map((entry) => entry.slug));
+  const deployedRolloutCohorts = deployedCohorts(mode);
 
   const extraSources = setDifference(repository.sourceDirectories, activeSlugs);
   const missingSources = setDifference(activeSlugs, repository.sourceDirectories);
@@ -459,6 +566,7 @@ export async function auditDeployment(
     if (typeof entry.baselineBundleSha256 !== "string" || entry.baselineBundleSha256.length === 0) {
       errors.push(entry.slug + ": reviewed live baseline bundle hash is missing; Task 8 is blocked");
     }
+    if (typeof entry.baselineVerifyJwt !== "boolean") errors.push(entry.slug + ": captured live baseline verify_jwt is missing");
     const config = repository.config.get(entry.slug);
     if (config && config.verifyJwt === undefined) errors.push(entry.slug + ": config verify_jwt is missing");
     else if (config && config.verifyJwt !== entry.verifyJwt) errors.push(entry.slug + ": config verify_jwt=" + config.verifyJwt + ", expected " + entry.verifyJwt);
@@ -516,17 +624,27 @@ export async function auditDeployment(
     if (!deployed.ezbr_sha256) errors.push(entry.slug + ": deployed metadata hash is missing");
     if (!deployed.bundle_sha256) errors.push(entry.slug + ": complete live bundle hash is missing");
 
-    if (mode === "deploy") {
-      if (entry.classification === "expected-active" && entry.baselineBundleSha256 && deployed.bundle_sha256 !== entry.baselineBundleSha256) {
-        errors.push(entry.slug + ": reviewed live baseline bundle hash mismatch");
+    if (entry.classification === "expected-active") {
+      const cohortIsDeployed = entry.rolloutCohort !== undefined && deployedRolloutCohorts.has(entry.rolloutCohort);
+      if (!cohortIsDeployed) {
+        if (entry.baselineBundleSha256 && deployed.bundle_sha256 !== entry.baselineBundleSha256) {
+          errors.push(entry.slug + (mode === "deploy"
+            ? ": reviewed live baseline bundle hash mismatch"
+            : ": deferred function no longer matches captured live baseline"));
+        }
+        if (typeof entry.baselineVerifyJwt === "boolean" && deployed.verify_jwt !== entry.baselineVerifyJwt) {
+          errors.push(entry.slug + ": deferred function verify_jwt no longer matches captured live baseline");
+        }
+      } else {
+        if (deployed.verify_jwt !== entry.verifyJwt) errors.push(entry.slug + ": deployed verify_jwt=" + deployed.verify_jwt + ", expected " + entry.verifyJwt);
+        const localHash = repository.bundleHashes.get(entry.slug);
+        if (!localHash || deployed.bundle_sha256 !== localHash) errors.push(entry.slug + ": deployed bundle does not match local deployable bundle");
       }
+    }
+    if (mode === "deploy") {
       if (entry.classification === "approved-retirement" && deployed.bundle_sha256 !== entry.archiveBundleSha256) {
         errors.push(entry.slug + ": live retirement bundle does not match recoverable archive");
       }
-    } else if (entry.classification === "expected-active") {
-      if (deployed.verify_jwt !== entry.verifyJwt) errors.push(entry.slug + ": deployed verify_jwt=" + deployed.verify_jwt + ", expected " + entry.verifyJwt);
-      const localHash = repository.bundleHashes.get(entry.slug);
-      if (!localHash || deployed.bundle_sha256 !== localHash) errors.push(entry.slug + ": deployed bundle does not match local deployable bundle");
     } else if (entry.classification === "approved-retirement" && mode === "pre") {
       if (deployed.bundle_sha256 !== entry.archiveBundleSha256) errors.push(entry.slug + ": pre-retirement live bundle does not match archive");
     }
@@ -535,6 +653,7 @@ export async function auditDeployment(
     }
   }
 
+  if (mode !== "deploy") {
   const migrationVersions = new Set((inventory.migrations ?? []).map((entry) => entry.version));
   for (const version of REQUIRED_MIGRATIONS) if (!migrationVersions.has(version)) errors.push("schema blocker: migration " + version + " is not applied");
 
@@ -547,10 +666,20 @@ export async function auditDeployment(
 
   const assumptions = inventory.schema?.assumptions ?? {};
   const assumptionNames = new Set(Object.keys(assumptions));
-  const requiredAssumptions = new Set(REQUIRED_SCHEMA_ASSUMPTIONS);
+  const preActivation = mode === "cohort-user" || mode === "cohort-internal";
+  const requiredCallerAssumption = preActivation
+    ? PRE_ACTIVATION_CALLER_ASSUMPTION
+    : POST_ACTIVATION_CALLER_ASSUMPTION;
+  const requiredAssumptions = new Set([...REQUIRED_SCHEMA_ASSUMPTIONS, requiredCallerAssumption]);
+  const allowedAssumptions = new Set([
+    ...REQUIRED_SCHEMA_ASSUMPTIONS,
+    PRE_ACTIVATION_CALLER_ASSUMPTION,
+    POST_ACTIVATION_CALLER_ASSUMPTION,
+  ]);
   errors.push(...setDifference(requiredAssumptions, assumptionNames).map((name) => "schema assumption missing: " + name));
-  errors.push(...setDifference(assumptionNames, requiredAssumptions).map((name) => "unexpected schema assumption: " + name));
+  errors.push(...setDifference(assumptionNames, allowedAssumptions).map((name) => "unexpected schema assumption: " + name));
   for (const name of REQUIRED_SCHEMA_ASSUMPTIONS) if (assumptions[name] !== true) errors.push("schema assumption failed: " + name);
+  if (assumptions[requiredCallerAssumption] !== true) errors.push("schema assumption failed: " + requiredCallerAssumption);
 
   const rpcInventory = inventory.privilegedRpcs ?? [];
   const rpcSignatures = rpcInventory.map((rpc) => rpc.signature);
@@ -592,7 +721,8 @@ export async function auditDeployment(
   }
 
   errors.push(...comparePairs("cron inventory", (inventory.cronTargets ?? []).map((entry) => [entry.jobName, entry.target]), EXPECTED_CRON as Array<[string, string]>));
-  errors.push(...comparePairs("trigger inventory", (inventory.triggerTargets ?? []).map((entry) => [entry.triggerName, entry.target]), EXPECTED_TRIGGERS as Array<[string, string]>));
+  errors.push(...comparePairs("trigger inventory", (inventory.triggerTargets ?? []).map((entry) => [entry.triggerName, entry.target]), preActivation ? [] : EXPECTED_TRIGGERS as Array<[string, string]>));
+  }
 
   return { mode, errors: sorted(new Set(errors)), comparisons };
 }
@@ -701,6 +831,7 @@ const LIVE_INVENTORY_SQL = [
   "union all select 'column', table_schema || '.' || table_name, column_name, true from information_schema.columns where (table_schema, table_name) in (('public','profiles'),('public','athletes'),('public','activities'),('private','oauth_states'))",
   "union all select 'cron', coalesce(jobname, jobid::text), (regexp_match(command, '/functions/v1/([a-z0-9-]+)'))[1], true from cron.job where command ~ '/functions/v1/[a-z0-9-]+'",
   "union all select 'trigger', tg.tgname || ':' || n.nspname || '.' || c.relname, (regexp_match(pg_get_functiondef(p.oid), '/functions/v1/([a-z0-9-]+)'))[1], true from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace join pg_proc p on p.oid=tg.tgfoid where not tg.tgisinternal and pg_get_functiondef(p.oid) ~ '/functions/v1/[a-z0-9-]+'",
+  "union all select 'assumption','live_view_definitions_match',null, (select count(*)=4 from (values ('activity_summary','3f91ffc93cc5cd952cc9873de6c5dc63'),('conversation_summaries','2b46d7b0aafbacf2b8f044214d1f6ba3'),('monthly_activity_stats','ed5bab41993ca187a0a25c2098ebf9c2'),('recent_journal_entries','b9a0389d9cedcc19f11f70776d33ee23')) expected(view_name,definition_md5) where to_regclass('public.'||expected.view_name) is not null and md5(pg_get_viewdef(to_regclass('public.'||expected.view_name)))=expected.definition_md5)",
   "union all select 'assumption','profiles_security_invoker_and_scoped',null, exists(select 1 from pg_class c where c.oid='public.profiles'::regclass and 'security_invoker=true'=any(coalesce(c.reloptions,array[]::text[]))) and not has_table_privilege('anon','public.profiles','select') and has_table_privilege('authenticated','public.profiles','select')",
   "union all select 'assumption','user_views_security_invoker_and_scoped',null, (select bool_and('security_invoker=true'=any(coalesce(c.reloptions,array[]::text[])) and not has_table_privilege('anon','public.'||c.relname,'select') and has_table_privilege('authenticated','public.'||c.relname,'select')) from pg_class c where c.oid in ('public.activity_summary'::regclass,'public.conversation_summaries'::regclass,'public.monthly_activity_stats'::regclass,'public.recent_journal_entries'::regclass))",
   "union all select 'assumption','analytics_views_service_only',null, (select bool_and(not has_table_privilege('anon','public.'||c.relname,'select') and not has_table_privilege('authenticated','public.'||c.relname,'select') and has_table_privilege('service_role','public.'||c.relname,'select')) from pg_class c where c.oid in ('public.analytics_activity_funnel'::regclass,'public.analytics_activity_hours'::regclass,'public.analytics_audio_coaching'::regclass,'public.analytics_daily_summary'::regclass,'public.analytics_user_engagement'::regclass))",
@@ -711,13 +842,14 @@ const LIVE_INVENTORY_SQL = [
   "union all select 'assumption','internal_delivery_schema',null, (select count(*)=5 from information_schema.columns where table_schema='public' and table_name='alert_deliveries' and column_name in ('attempt_count','processing_started_at','claim_generation','lease_expires_at','idempotency_key'))",
   `union all select 'service_only_rpc',v.signature,json_build_object('category',v.category,'anon_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('anon',v.signature,'execute') end,'authenticated_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('authenticated',v.signature,'execute') end,'service_role_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('service_role',v.signature,'execute') end)::text,true from (values ${SERVICE_ONLY_RPC_VALUES_SQL}) v(signature,category)`,
   `union all select 'assumption','internal_job_rpcs_service_only',null,coalesce((select bool_and(case when to_regprocedure(v.signature) is null then false else not has_function_privilege('anon',v.signature,'execute') and not has_function_privilege('authenticated',v.signature,'execute') and has_function_privilege('service_role',v.signature,'execute') end) from (values ${SERVICE_ONLY_RPC_VALUES_SQL}) v(signature,category) where v.category='delivery'),false)`,
-  "union all select 'assumption','internal_callers_use_dedicated_secret',null, to_regprocedure('private.require_internal_job_secret()') is not null and (select count(*)=5 from cron.job where command like '%X-Runaway-Internal-Secret%')",
+  "union all select 'assumption','internal_callers_inactive',null, not exists(select 1 from cron.job where active and jobname in ('daily-research-brief','fetch-daily-articles','check-conditions-job','process-deliveries-job','sync-race-directory-job')) and not exists(select 1 from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace where not tg.tgisinternal and n.nspname='public' and c.relname='activities' and tg.tgname in ('activity-insert-notification','on_activity_insert','runaway_activity_insert_internal'))",
+  "union all select 'assumption','internal_callers_use_dedicated_secret',null, to_regprocedure('private.require_internal_job_secret()') is not null and (select count(*)=5 from cron.job where jobname in ('daily-research-brief','fetch-daily-articles','check-conditions-job','process-deliveries-job','sync-race-directory-job') and command like '%X-Runaway-Internal-Secret%' and command not like '%Authorization%') and (select count(*)=3 from cron.job where active and jobname in ('daily-research-brief','fetch-daily-articles','check-conditions-job')) and (select count(*)=2 from cron.job where not active and jobname in ('process-deliveries-job','sync-race-directory-job')) and (select count(*)=1 from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace where not tg.tgisinternal and n.nspname='public' and c.relname='activities' and tg.tgname='runaway_activity_insert_internal')",
   "union all select 'assumption','oauth_states_secure',null, to_regclass('private.oauth_states') is not null and (select relrowsecurity from pg_class where oid='private.oauth_states'::regclass)",
   `union all select 'assumption','oauth_state_rpcs_service_only',null,coalesce((select bool_and(case when to_regprocedure(v.signature) is null then false else not has_function_privilege('anon',v.signature,'execute') and not has_function_privilege('authenticated',v.signature,'execute') and has_function_privilege('service_role',v.signature,'execute') end) from (values ${SERVICE_ONLY_RPC_VALUES_SQL}) v(signature,category) where v.category='oauth-state'),false)`,
   "union all select 'assumption','garmin_oauth_tokens_service_only',null, not has_table_privilege('anon','public.garmin_oauth_tokens','select') and not has_table_privilege('authenticated','public.garmin_oauth_tokens','select')",
   "union all select 'assumption','runsignup_credentials_on_athletes',null, (select count(*)=3 from information_schema.columns where table_schema='public' and table_name='athletes' and column_name in ('runsignup_access_token','runsignup_refresh_token','runsignup_token_expires_at'))",
   "union all select 'assumption','profiles_credential_free',null, not exists(select 1 from information_schema.columns where table_schema='public' and table_name='profiles' and column_name in ('runsignup_access_token','runsignup_refresh_token','runsignup_token_expires_at'))",
-  "union all select 'assumption','activities_client_operation_id_contract',null, exists(select 1 from information_schema.columns where table_schema='public' and table_name='activities' and column_name='client_operation_id' and data_type='uuid' and is_nullable='YES') and exists(select 1 from pg_constraint c where c.conrelid='public.activities'::regclass and c.contype='u' and (select array_agg(a.attname order by keys.ordinality) from unnest(c.conkey) with ordinality keys(attnum,ordinality) join pg_attribute a on a.attrelid=c.conrelid and a.attnum=keys.attnum)=array['athlete_id','client_operation_id']::name[]) and (select relrowsecurity from pg_class where oid='public.activities'::regclass) and (select count(*)=3 from pg_policies where schemaname='public' and tablename='activities' and policyname in ('Users can view own activities','Users can insert own activities','Users can update own activities') and cmd in ('SELECT','INSERT','UPDATE') and 'authenticated'=any(roles))",
+  "union all select 'assumption','activities_client_operation_id_contract',null, exists(select 1 from information_schema.columns where table_schema='public' and table_name='activities' and column_name='client_operation_id' and data_type='uuid' and is_nullable='YES') and exists(select 1 from pg_constraint c where c.conrelid='public.activities'::regclass and c.contype='u' and (select array_agg(a.attname order by keys.ordinality) from unnest(c.conkey) with ordinality keys(attnum,ordinality) join pg_attribute a on a.attrelid=c.conrelid and a.attnum=keys.attnum)=array['athlete_id','client_operation_id']::name[]) and (select relrowsecurity from pg_class where oid='public.activities'::regclass) and (select count(*)=4 from pg_policies where schemaname='public' and tablename='activities' and policyname in ('Users can view own activities','Users can insert own activities','Users can update own activities','Users can delete own activities') and cmd in ('SELECT','INSERT','UPDATE','DELETE') and 'authenticated'=any(roles))",
 ].join("\n");
 
 async function fetchLiveInventory(
@@ -791,7 +923,7 @@ function argument(name: string): string | undefined {
 
 async function main(): Promise<number> {
   const mode = (argument("--mode") ?? "deploy") as AuditMode;
-  if (!["deploy", "pre", "post"].includes(mode)) throw new Error("invalid --mode");
+  if (!["deploy", "cohort-user", "cohort-internal", "cohort-oauth", "pre", "post"].includes(mode)) throw new Error("invalid --mode");
   const remoteRoot = argument("--remote-bundles");
   if (!remoteRoot) throw new Error("--remote-bundles is required so complete live bundle hashes cannot be omitted");
   const inventoryPath = argument("--inventory");

@@ -1,6 +1,6 @@
 begin;
 
-select plan(47);
+select plan(54);
 
 select ok(
   not has_table_privilege('anon', 'public.profiles', 'select'),
@@ -115,13 +115,43 @@ select ok(
 );
 
 select ok(
-  (select count(*) = 3 from pg_policies where schemaname = 'public' and tablename = 'activities' and cmd in ('SELECT', 'INSERT', 'UPDATE')),
-  'activities has owner-scoped select, insert, and update policies'
+  (select count(*) = 4 from pg_policies where schemaname = 'public' and tablename = 'activities' and cmd in ('SELECT', 'INSERT', 'UPDATE', 'DELETE')),
+  'activities has owner-scoped select, insert, update, and delete policies'
 );
 
 select ok(
-  to_regprocedure('public.notify_activity_insert()') is null,
-  'the literal-bearing activity notification trigger function is removed'
+  to_regprocedure('public.notify_activity_insert()') is not null,
+  'the dedicated-secret activity notification function exists without an active caller'
+);
+
+select hasnt_view(
+  'public',
+  'activity_summary',
+  'clean local migration does not fabricate the captured live activity_summary definition'
+);
+
+select hasnt_view(
+  'public',
+  'conversation_summaries',
+  'clean local migration does not fabricate the captured live conversation_summaries definition'
+);
+
+select hasnt_view(
+  'public',
+  'monthly_activity_stats',
+  'clean local migration does not fabricate the captured live monthly_activity_stats definition'
+);
+
+select hasnt_view(
+  'public',
+  'recent_journal_entries',
+  'clean local migration does not fabricate the captured live recent_journal_entries definition'
+);
+
+select is(
+  (select count(*) from pg_trigger where tgrelid = 'public.activities'::regclass and not tgisinternal and tgname in ('activity-insert-notification', 'on_activity_insert', 'runaway_activity_insert_internal')),
+  0::bigint,
+  'base migrations leave legacy and dedicated activity callers inactive'
 );
 
 select ok(
@@ -316,6 +346,17 @@ select lives_ok(
   $$insert into public.activities (id, athlete_id, name, client_operation_id)
     values (900000011, 900000001, 'Task 7 first create', 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa')$$,
   'user A can insert an idempotent activity for their athlete'
+);
+
+select results_eq(
+  $$delete from public.activities where id = 900000015 returning id$$,
+  $$values (900000015::bigint)$$,
+  'user A can delete their own activity'
+);
+
+select is_empty(
+  $$delete from public.activities where id = 900000014 returning id$$,
+  'user A cannot delete user B activity'
 );
 
 select results_eq(

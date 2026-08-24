@@ -1,5 +1,37 @@
 -- Contain public views, training-plan RLS, and privileged RPC execution.
 
+set lock_timeout = '5s';
+set statement_timeout = '5min';
+
+do $$
+declare
+  missing_dependencies text[];
+  orphan_plan_count bigint;
+begin
+  select array_agg(name order by name)
+  into missing_dependencies
+  from unnest(array[
+    'public.athletes', 'public.weekly_training_plans', 'public.profiles'
+  ]) as required(name)
+  where to_regclass(name) is null;
+
+  if missing_dependencies is not null then
+    raise exception 'containment dependency precheck failed: %', missing_dependencies;
+  end if;
+
+  select count(*) into orphan_plan_count
+  from public.weekly_training_plans plan
+  left join public.athletes athlete on athlete.id = plan.athlete_id
+  where athlete.id is null;
+
+  raise notice 'task8 evidence weekly_training_plans rows=%, orphan_rows=%',
+    (select count(*) from public.weekly_training_plans), orphan_plan_count;
+  if orphan_plan_count <> 0 then
+    raise exception 'weekly_training_plans contains % orphan rows', orphan_plan_count;
+  end if;
+end
+$$;
+
 -- The profiles compatibility view is the sole view whose output changes: OAuth
 -- credential columns are intentionally removed. Dropping it is required because
 -- CREATE OR REPLACE VIEW cannot remove existing output columns.
@@ -30,35 +62,47 @@ create trigger profiles_on_update
 
 grant select on public.profiles to authenticated;
 
--- Preserve all existing user-view definitions and output columns while making
--- their underlying table RLS policies apply to API callers.
-alter view public.activity_summary set (security_invoker = true);
-alter view public.conversation_summaries set (security_invoker = true);
-alter view public.monthly_activity_stats set (security_invoker = true);
-alter view public.recent_journal_entries set (security_invoker = true);
+-- Preserve definitions and output columns for catalog views that exist. Clean
+-- local databases do not contain the captured live-only views; production
+-- preflight strictly verifies all expected names and definition hashes before
+-- this migration is allowed to run.
+do $views$
+declare
+  view_name text;
+begin
+  foreach view_name in array array[
+    'activity_summary',
+    'conversation_summaries',
+    'monthly_activity_stats',
+    'recent_journal_entries'
+  ] loop
+    if to_regclass(format('public.%I', view_name)) is null then
+      raise notice 'task8 evidence optional local view public.% is absent; production preflight must reject this inventory', view_name;
+      continue;
+    end if;
 
-revoke all on public.activity_summary from anon, authenticated;
-revoke all on public.conversation_summaries from anon, authenticated;
-revoke all on public.monthly_activity_stats from anon, authenticated;
-revoke all on public.recent_journal_entries from anon, authenticated;
+    execute format('alter view public.%I set (security_invoker = true)', view_name);
+    execute format('revoke all on public.%I from anon, authenticated', view_name);
+    execute format('grant select on public.%I to authenticated', view_name);
+  end loop;
 
-grant select on public.activity_summary to authenticated;
-grant select on public.conversation_summaries to authenticated;
-grant select on public.monthly_activity_stats to authenticated;
-grant select on public.recent_journal_entries to authenticated;
+  foreach view_name in array array[
+    'analytics_activity_funnel',
+    'analytics_activity_hours',
+    'analytics_audio_coaching',
+    'analytics_daily_summary',
+    'analytics_user_engagement'
+  ] loop
+    if to_regclass(format('public.%I', view_name)) is null then
+      raise notice 'task8 evidence optional local analytics view public.% is absent', view_name;
+      continue;
+    end if;
 
--- Aggregate analytics are an internal-only surface.
-revoke all on public.analytics_activity_funnel from anon, authenticated, service_role;
-revoke all on public.analytics_activity_hours from anon, authenticated, service_role;
-revoke all on public.analytics_audio_coaching from anon, authenticated, service_role;
-revoke all on public.analytics_daily_summary from anon, authenticated, service_role;
-revoke all on public.analytics_user_engagement from anon, authenticated, service_role;
-
-grant select on public.analytics_activity_funnel to service_role;
-grant select on public.analytics_activity_hours to service_role;
-grant select on public.analytics_audio_coaching to service_role;
-grant select on public.analytics_daily_summary to service_role;
-grant select on public.analytics_user_engagement to service_role;
+    execute format('revoke all on public.%I from anon, authenticated, service_role', view_name);
+    execute format('grant select on public.%I to service_role', view_name);
+  end loop;
+end
+$views$;
 
 -- Remove the global authenticated read policy and make the retained owner
 -- policy explicitly authenticated and initplan-friendly.
@@ -473,6 +517,7 @@ revoke all on function public.profiles_update_trigger() from public, anon, authe
 
 -- Do not retain compromised literals in a callable function or active trigger.
 -- Task 4 replaces this path with authenticated internal delivery.
+drop trigger if exists "activity-insert-notification" on public.activities;
 drop trigger if exists on_activity_insert on public.activities;
 drop function if exists public.notify_activity_insert();
 drop function if exists public.trigger_activity_notification();

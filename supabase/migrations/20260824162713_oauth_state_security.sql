@@ -1,3 +1,19 @@
+set lock_timeout = '5s';
+set statement_timeout = '5min';
+
+do $$
+begin
+  if to_regclass('public.athletes') is null then
+    raise exception 'missing dependency public.athletes';
+  end if;
+  if to_regclass('public.garmin_oauth_tokens') is null then
+    raise exception 'missing dependency public.garmin_oauth_tokens';
+  end if;
+  raise notice 'task8 evidence garmin_oauth_tokens rows=%',
+    (select count(*) from public.garmin_oauth_tokens);
+end
+$$;
+
 create schema if not exists private;
 
 create table private.oauth_states (

@@ -1,3 +1,28 @@
+set lock_timeout = '5s';
+set statement_timeout = '5min';
+
+do $$
+declare
+  unsupported_status_count bigint;
+begin
+  if to_regclass('public.alert_deliveries') is null then
+    raise exception 'missing dependency public.alert_deliveries';
+  end if;
+  if to_regclass('public.activities') is null then
+    raise exception 'missing dependency public.activities';
+  end if;
+
+  select count(*) into unsupported_status_count
+  from public.alert_deliveries
+  where status not in ('pending', 'processing', 'submitting', 'ambiguous', 'sent', 'delivered', 'retryable', 'failed');
+  raise notice 'task8 evidence alert_deliveries rows=%, unsupported_status_rows=%',
+    (select count(*) from public.alert_deliveries), unsupported_status_count;
+  if unsupported_status_count <> 0 then
+    raise exception 'alert_deliveries contains % unsupported status rows', unsupported_status_count;
+  end if;
+end
+$$;
+
 alter table public.alert_deliveries
   drop constraint if exists alert_deliveries_status_check;
 
@@ -5,7 +30,10 @@ alter table public.alert_deliveries
   add constraint alert_deliveries_status_check
   check (status in (
     'pending', 'processing', 'submitting', 'ambiguous', 'sent', 'delivered', 'retryable', 'failed'
-  ));
+  )) not valid;
+
+alter table public.alert_deliveries
+  validate constraint alert_deliveries_status_check;
 
 alter table public.alert_deliveries
   add column if not exists attempt_count integer not null default 0,
@@ -17,20 +45,6 @@ alter table public.alert_deliveries
 
 alter table public.alert_deliveries
   alter column idempotency_key set not null;
-
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'alert_deliveries_idempotency_key_key'
-      and conrelid = 'public.alert_deliveries'::regclass
-  ) then
-    alter table public.alert_deliveries
-      add constraint alert_deliveries_idempotency_key_key unique (idempotency_key);
-  end if;
-end
-$$;
 
 create index if not exists alert_deliveries_claimable_idx
   on public.alert_deliveries (status, lease_expires_at, created_at, id)
@@ -371,96 +385,24 @@ revoke all on function public.notify_activity_insert()
   from public, anon, authenticated, service_role;
 
 drop trigger if exists on_activity_insert on public.activities;
-create trigger on_activity_insert
-after insert on public.activities
-for each row execute function public.notify_activity_insert();
+drop trigger if exists "activity-insert-notification" on public.activities;
+drop trigger if exists runaway_activity_insert_internal on public.activities;
 
-select cron.unschedule(jobid)
-from cron.job
-where jobname in (
-  'check-conditions-job',
-  'process-deliveries-job',
-  'sync-race-directory-job',
-  'daily-research-brief',
-  'fetch-daily-articles'
-);
-
-select cron.schedule(
-  'check-conditions-job',
-  '*/30 * * * *',
-  $job$
-  select net.http_post(
-    url := (select decrypted_secret from vault.decrypted_secrets where name = 'supabase_url' limit 1)
-      || '/functions/v1/check-conditions',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
-    ),
-    body := '{}'::jsonb
-  );
-  $job$
-);
-
-select cron.schedule(
-  'process-deliveries-job',
-  '* * * * *',
-  $job$
-  select net.http_post(
-    url := (select decrypted_secret from vault.decrypted_secrets where name = 'supabase_url' limit 1)
-      || '/functions/v1/process-deliveries',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
-    ),
-    body := '{}'::jsonb
-  );
-  $job$
-);
-
-select cron.schedule(
-  'sync-race-directory-job',
-  '0 2 * * *',
-  $job$
-  select net.http_post(
-    url := (select decrypted_secret from vault.decrypted_secrets where name = 'supabase_url' limit 1)
-      || '/functions/v1/sync-race-directory',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
-    ),
-    body := '{}'::jsonb
-  );
-  $job$
-);
-
-select cron.schedule(
-  'daily-research-brief',
-  '0 6 * * *',
-  $job$
-  select net.http_post(
-    url := (select decrypted_secret from vault.decrypted_secrets where name = 'supabase_url' limit 1)
-      || '/functions/v1/daily-research-brief',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
-    ),
-    body := jsonb_build_object('trigger', 'scheduled', 'timestamp', now()::text)
-  );
-  $job$
-);
-
-select cron.schedule(
-  'fetch-daily-articles',
-  '0 6 * * *',
-  $job$
-  select net.http_post(
-    url := (select decrypted_secret from vault.decrypted_secrets where name = 'supabase_url' limit 1)
-      || '/functions/v1/fetch-daily-articles',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
-    ),
-    body := jsonb_build_object('trigger', 'scheduled', 'timestamp', now()::text)
-  );
-  $job$
-);
+-- Pause every existing reviewed internal schedule. The separate rollout activation
+-- script replaces commands only after Edge/Vault secrets and endpoints are ready.
+do $$
+declare
+  job record;
+begin
+  for job in
+    select jobid
+    from cron.job
+    where jobname in (
+      'check-conditions-job', 'process-deliveries-job', 'sync-race-directory-job',
+      'daily-research-brief', 'fetch-daily-articles'
+    )
+  loop
+    perform cron.alter_job(job.jobid, active := false);
+  end loop;
+end
+$$;

@@ -70,6 +70,9 @@ async function requestedRedirect(req: Request): Promise<unknown> {
 Deno.serve(createOAuthInitiationHandler({
   requireUser,
   begin: async (req, user) => {
+    if (Deno.env.get("GARMIN_OAUTH_INITIATION_BLOCKED")?.trim().toLowerCase() === "true") {
+      throw new HttpError(503, "GARMIN_OAUTH_INITIATION_BLOCKED", "Garmin connection initiation is temporarily unavailable");
+    }
     const redirectUrl = safeRedirect(await requestedRedirect(req));
     const clientId = Deno.env.get("GARMIN_CONSUMER_KEY")?.trim();
     const clientSecret = Deno.env.get("GARMIN_CONSUMER_SECRET")?.trim();

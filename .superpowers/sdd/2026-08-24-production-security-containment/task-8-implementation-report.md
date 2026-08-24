@@ -229,3 +229,31 @@ Production mutations remained empty. Docker, Xcode, and Deno were not retried pe
 ### Readiness
 
 Status: BLOCKED for production rollout. The controller must apply/reconcile the five reviewed migrations, remove the retired run-ddl deployable source directory or explicitly preserve it outside the active source tree, replace the legacy activity triggers, revoke anon on all protected RPCs, install/service-lock the five internal RPCs, deploy the 42 reviewed active bundles with their configured JWT policies, retire the 13 approved functions, and then run post-deploy audit.
+
+## Local rollout-blocker remediation checkpoint (2026-08-24)
+
+Production writes: none.
+
+Implemented locally:
+
+- Removed both legacy activity callers and split all trigger/cron activation into guarded final activation and fail-closed rollback scripts.
+- Base migrations now install no active internal caller and preserve captured schedules plus the inactive states of `process-deliveries-job` and `sync-race-directory-job`.
+- Added migration timeouts, dependency/data-shape prechecks, row/policy evidence, owner-scoped activity DELETE, and nonblocking constraint construction where practical.
+- Kept `run-ddl` archive-only and rejected active source/fleet deployment.
+- Added exact user/internal/OAuth cohorts, JWT flags, deferred live-baseline comparison, stage-specific inactive/activated caller assumptions, and exact live-view definition inventory requirements.
+- Clean local migrations conditionally harden existing views without fabricating the four live-only definitions; production inventory requires all four captured hashes.
+- Added the Garmin initiation kill switch before OAuth state creation.
+- Rewrote the runbook with exact phases, rollback procedures, Garmin drain/recheck, before/after smokes, credential rotations, and the Task 7 gate pinned to `/private/tmp/runaway-ios-security-compatibility` at `39efc1a0f4c8c09ef529600eccf422ab959912ed`.
+
+Exact completed local results:
+
+- Node Deno-compatibility audit suite: 26 passed, 0 failed, exit 0, bounded at 60 seconds.
+- `supabase start`: passed, exit 0, bounded at 180 seconds. Every migration applied, the four absent live-only views emitted expected notices and were not fabricated, seed completed, and local services became healthy.
+- `supabase db reset`: not run because the final checkpoint was requested immediately after successful start.
+- pgTAP `security_containment.sql`: not run.
+- pgTAP `internal_jobs.sql`: not run.
+- pgTAP `oauth_state.sql`: not run.
+- pgTAP `internal_callers_activation.sql`: not run.
+- Native Deno was not retried. Earlier `npx` acquisition hung and exited 130 when interrupted; offline Deno was not cached.
+
+Remaining local verification gates are reset, each pgTAP suite individually, local Vault/activation pgTAP, and rollback exercise. Production rollout remains blocked on those results and every runbook approval/evidence gate.

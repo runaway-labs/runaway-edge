@@ -70,5 +70,3 @@ SELECT
 -- To change the schedule (e.g., 7 AM instead of 6 AM):
 -- SELECT cron.unschedule('daily-research-brief');
 -- Then re-run the schedule command with new time
-
-COMMENT ON FUNCTION cron.schedule IS 'Daily research brief scheduled for 6 AM UTC - generates AI-powered app improvement recommendations';
