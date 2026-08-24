@@ -60,17 +60,33 @@ export function createRequireUser(createClient: UserGuardClientFactory) {
   ): Promise<UserContext> {
     const { authorization, accessToken } = getBearerToken(req);
     const client = createClient(authorization);
-    const { data: authData, error: authError } = await client.auth.getUser(accessToken);
+    let authResult: AuthUserResult;
+
+    try {
+      authResult = await client.auth.getUser(accessToken);
+    } catch {
+      throw new HttpError(500, "AUTH_LOOKUP_FAILED", "Unable to verify the bearer token");
+    }
+
+    const { data: authData, error: authError } = authResult;
 
     if (authError || !authData.user) {
       throw new HttpError(401, "INVALID_TOKEN", "The bearer token is invalid");
     }
 
-    const { data: athlete, error: athleteError } = await client
-      .from("athletes")
-      .select("id")
-      .eq("auth_user_id", authData.user.id)
-      .maybeSingle();
+    let athleteResult: AthleteLookupResult;
+
+    try {
+      athleteResult = await client
+        .from("athletes")
+        .select("id")
+        .eq("auth_user_id", authData.user.id)
+        .maybeSingle();
+    } catch {
+      throw new HttpError(500, "ATHLETE_LOOKUP_FAILED", "Unable to resolve the authenticated athlete");
+    }
+
+    const { data: athlete, error: athleteError } = athleteResult;
 
     if (athleteError) {
       throw new HttpError(500, "ATHLETE_LOOKUP_FAILED", "Unable to resolve the authenticated athlete");

@@ -15,6 +15,7 @@ async function expectHttpError(
   action: () => Promise<unknown>,
   status: number,
   code: string,
+  message?: string,
 ): Promise<void> {
   try {
     await action();
@@ -25,6 +26,9 @@ async function expectHttpError(
 
     assertEquals(error.status, status);
     assertEquals(error.code, code);
+    if (message !== undefined) {
+      assertEquals(error.message, message);
+    }
     return;
   }
 
@@ -40,24 +44,38 @@ function request(authorization?: string): Request {
 function clientFactory(options: {
   user?: { id: string } | null;
   authError?: unknown;
+  authRejection?: unknown;
   athlete?: { id: number } | null;
   athleteError?: unknown;
+  athleteRejection?: unknown;
 } = {}): UserGuardClientFactory {
   return () => {
     const client: UserGuardClient = {
       auth: {
-        getUser: async () => ({
-          data: { user: options.user ?? { id: "auth-user-1" } },
-          error: options.authError ?? null,
-        }),
+        getUser: async () => {
+          if (options.authRejection !== undefined) {
+            throw options.authRejection;
+          }
+
+          return {
+            data: { user: options.user ?? { id: "auth-user-1" } },
+            error: options.authError ?? null,
+          };
+        },
       },
       from: () => ({
         select: () => ({
           eq: () => ({
-            maybeSingle: async () => ({
-              data: options.athlete === undefined ? { id: 42 } : options.athlete,
-              error: options.athleteError ?? null,
-            }),
+            maybeSingle: async () => {
+              if (options.athleteRejection !== undefined) {
+                throw options.athleteRejection;
+              }
+
+              return {
+                data: options.athlete === undefined ? { id: 42 } : options.athlete,
+                error: options.athleteError ?? null,
+              };
+            },
           }),
         }),
       }),
@@ -88,6 +106,58 @@ Deno.test("requireUser rejects a user without an athlete record", async () => {
   const requireUser = createRequireUser(clientFactory({ athlete: null }));
 
   await expectHttpError(() => requireUser(request("Bearer valid-token")), 403, "ATHLETE_NOT_FOUND");
+});
+
+Deno.test("requireUser normalizes a returned athlete lookup error", async () => {
+  const requireUser = createRequireUser(clientFactory({
+    athleteError: { code: "UPSTREAM_FAILURE", details: "private upstream details" },
+  }));
+
+  await expectHttpError(
+    () => requireUser(request("Bearer secret-token")),
+    500,
+    "ATHLETE_LOOKUP_FAILED",
+    "Unable to resolve the authenticated athlete",
+  );
+});
+
+Deno.test("requireUser normalizes a duplicate-row maybeSingle error", async () => {
+  const requireUser = createRequireUser(clientFactory({
+    athleteError: { code: "PGRST116", details: "Results contain 2 rows" },
+  }));
+
+  await expectHttpError(
+    () => requireUser(request("Bearer secret-token")),
+    500,
+    "ATHLETE_LOOKUP_FAILED",
+    "Unable to resolve the authenticated athlete",
+  );
+});
+
+Deno.test("requireUser normalizes a rejected Auth request", async () => {
+  const requireUser = createRequireUser(clientFactory({
+    authRejection: new Error("network failure for secret-token"),
+  }));
+
+  await expectHttpError(
+    () => requireUser(request("Bearer secret-token")),
+    500,
+    "AUTH_LOOKUP_FAILED",
+    "Unable to verify the bearer token",
+  );
+});
+
+Deno.test("requireUser normalizes a rejected athlete query", async () => {
+  const requireUser = createRequireUser(clientFactory({
+    athleteRejection: new Error("database failure for secret-token"),
+  }));
+
+  await expectHttpError(
+    () => requireUser(request("Bearer secret-token")),
+    500,
+    "ATHLETE_LOOKUP_FAILED",
+    "Unable to resolve the authenticated athlete",
+  );
 });
 
 Deno.test("requireUser rejects a requested athlete that differs from the authenticated athlete", async () => {

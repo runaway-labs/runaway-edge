@@ -3,7 +3,8 @@
 ## Files
 
 - `supabase/functions/_shared/require-user.ts` — bearer-JWT authentication,
-  authenticated-athlete resolution, typed user context, and stable HTTP errors.
+  authenticated-athlete resolution, typed user context, and stable HTTP errors
+  for returned and rejected Supabase failures.
 - `supabase/functions/_shared/require-user.test.ts` — pure injected-client Deno
   coverage for required guard outcomes.
 - `.superpowers/sdd/2026-08-24-production-security-containment/progress.md` —
@@ -22,11 +23,23 @@ Command:
 npx --yes deno test supabase/functions/_shared/require-user.test.ts
 ```
 
-Result: `ok | 5 passed | 0 failed (15ms)`.
+Result: `ok | 9 passed | 0 failed (15ms)`.
 
 Covered outcomes: missing authorization (`401`), invalid token (`401`), missing
-athlete (`403`), mismatched requested athlete (`403`), and matching authenticated
-user/athlete context.
+athlete (`403`), returned athlete lookup failure (`500`), duplicate-row
+`maybeSingle` failure (`500`), rejected Auth request (`500`), rejected athlete
+query (`500`), mismatched requested athlete (`403`), and matching authenticated
+user/athlete context. The 5xx tests assert exact stable status, code, and message
+values that do not include upstream errors or bearer-token details.
+
+## Review fixes
+
+- Rejected `auth.getUser()` promises become `500 AUTH_LOOKUP_FAILED` with a
+  fixed public message.
+- Returned or rejected athlete lookup failures, including duplicate-row
+  `maybeSingle` errors, become `500 ATHLETE_LOOKUP_FAILED` with a fixed public
+  message.
+- Upstream exception objects are discarded and are neither logged nor exposed.
 
 ## Commit
 
