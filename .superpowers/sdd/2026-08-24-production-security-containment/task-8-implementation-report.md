@@ -197,3 +197,35 @@ not. Production rollout remains with the controller after these blockers clear.
 The carried modification to `supabase/functions/strava-webhook/index.ts` and the
 pre-existing untracked `docs/superpowers/` plan/spec files were not modified for,
 staged with, or included in the Task 8 preparation commit.
+
+## Read-only live preflight checkpoint (2026-08-24)
+
+Production mutations remained empty. Docker, Xcode, and Deno were not retried per controller instruction.
+
+### Complete live function inventory
+
+- Supabase get_edge_function retrieved the remaining 26 complete deployed bundles.
+- Inventory coverage: 55/55 functions; canonical hashes: 55/55; embedded-secret scan failures: 0.
+- All 42 expected-active manifest baselines now pin the reviewed canonical live bundle hashes.
+- All 13 approved-retirement archives remain restore-blocked pending security review.
+
+### Fresh live catalog
+
+- Applied migration versions: 23; required Task 8 versions present: 0/5.
+- public.activities.client_operation_id: absent; user-scoped unique constraint/index: absent.
+- public.profiles still exposes runsignup_access_token, runsignup_refresh_token, and runsignup_token_expires_at.
+- Protected RPCs: 8/8 exist, and all 8 still grant anon EXECUTE.
+- Service-only delivery/OAuth RPCs: 0/5 exist.
+- Cron: 5 jobs captured by schedule/status/target only; all expected target pairs match.
+- Triggers: 20 non-internal targets captured; production has the legacy activity-insert-notification and public.notify_activity_insert pair instead of on_activity_insert:public.activities -> notify-activity-insert.
+- OAuth metadata only: private.oauth_states is absent; garmin_oauth_tokens has 2 owned legacy rows, both expired, with 0 active rows; oauth_tokens has 0 rows. No token, state, verifier, or secret value was read into an artifact.
+
+### Dry-run audit results
+
+- deploy: expected failure, 46 unique findings. Categories: 5 missing required migrations, 14 failed schema assumptions, 10 missing schema columns/contracts, 8 protected RPC anon grants, 5 absent service-only RPC grants, 3 activity-trigger target mismatches, and 1 local retired run-ddl source-directory blocker.
+- pre: expected failure, 111 unique findings. It contains all deploy findings plus 42 expected live-to-local bundle drifts and 23 live verify_jwt policy drifts.
+- Canonical live baseline comparisons and all 13 retirement archive hash/JWT checks pass in deploy mode. Cron target comparison passes.
+
+### Readiness
+
+Status: BLOCKED for production rollout. The controller must apply/reconcile the five reviewed migrations, remove the retired run-ddl deployable source directory or explicitly preserve it outside the active source tree, replace the legacy activity triggers, revoke anon on all protected RPCs, install/service-lock the five internal RPCs, deploy the 42 reviewed active bundles with their configured JWT policies, retire the 13 approved functions, and then run post-deploy audit.
