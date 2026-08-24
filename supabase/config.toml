@@ -153,6 +153,36 @@ entrypoint = "./functions/sync-beta/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/sync-beta/*.html" ]
 
+[functions.training-plan]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/training-plan/index.ts"
+
+[functions.identity-profile]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/identity-profile/index.ts"
+
+[functions.feedback-workout]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/feedback-workout/index.ts"
+
+[functions.check-milestones]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/check-milestones/index.ts"
+
+[functions.backfill-splits]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/backfill-splits/index.ts"
+
+[functions.user-races]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/user-races/index.ts"
+
 [functions.strava-webhook]
 enabled = true
 verify_jwt = false  # Strava webhooks don't send JWT auth

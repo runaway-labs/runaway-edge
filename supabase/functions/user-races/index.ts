@@ -5,8 +5,12 @@
 //   GET  /user-races              — fetch registered races using stored RunSignUp token
 //   POST /user-races?action=token — exchange an OAuth2 authorization code for tokens
 
-import { handleCors, jsonResponse, errorResponse } from "../_shared/cors.ts";
-import { getUserFromAuth, getSupabaseAdmin } from "../_shared/supabase-client.ts";
+import { corsHeaders } from "../_shared/cors.ts";
+import {
+  resolveUserEndpointDependencies,
+  userGuardErrorResponse,
+  type UserEndpointDependencies,
+} from "../_shared/user-endpoint.ts";
 
 const RUNSIGNUP_API_URL = "https://runsignup.com/rest/user/registered-races";
 const RUNSIGNUP_TOKEN_URL = "https://api.runsignup.com/rest/v2/auth/auth-code-redemption.json";
@@ -23,6 +27,7 @@ async function exchangeCode(
   redirectUri: string,
   clientId: string,
   clientSecret: string,
+  fetchImpl: typeof fetch,
 ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -32,7 +37,7 @@ async function exchangeCode(
     redirect_uri: redirectUri,
   });
 
-  const res = await fetch(RUNSIGNUP_TOKEN_URL, {
+  const res = await fetchImpl(RUNSIGNUP_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -51,6 +56,7 @@ async function refreshAccessToken(
   refreshToken: string,
   clientId: string,
   clientSecret: string,
+  fetchImpl: typeof fetch,
 ): Promise<{ access_token: string; refresh_token?: string; expires_in: number }> {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
@@ -59,7 +65,7 @@ async function refreshAccessToken(
     client_secret: encodeSecret(clientSecret),
   });
 
-  const res = await fetch(RUNSIGNUP_REFRESH_URL, {
+  const res = await fetchImpl(RUNSIGNUP_REFRESH_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -74,8 +80,8 @@ async function refreshAccessToken(
 }
 
 // Fetch registered races from RunSignUp using a user-scoped access token
-async function fetchRegisteredRaces(accessToken: string) {
-  const res = await fetch(`${RUNSIGNUP_API_URL}?format=json`, {
+async function fetchRegisteredRaces(accessToken: string, fetchImpl: typeof fetch) {
+  const res = await fetchImpl(`${RUNSIGNUP_API_URL}?format=json`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
@@ -91,39 +97,58 @@ async function fetchRegisteredRaces(accessToken: string) {
   return data;
 }
 
-Deno.serve(async (req: Request) => {
-  const corsResponse = handleCors(req);
-  if (corsResponse) return corsResponse;
+function jsonResponse(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function errorResponse(message: string, status: number): Response {
+  return jsonResponse({ error: message }, status);
+}
+
+interface UserRacesDependencies extends UserEndpointDependencies {
+  fetch: typeof fetch;
+  getEnv: (name: string) => string | undefined;
+}
+
+export function createHandler(overrides: Partial<UserRacesDependencies> = {}) {
+  const userDeps = resolveUserEndpointDependencies(overrides);
+  const deps: UserRacesDependencies = {
+    ...userDeps,
+    fetch: overrides.fetch ?? globalThis.fetch,
+    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
+  };
+
+  return async (req: Request) => {
+    if (req.method === "OPTIONS") {
+      return new Response(null, { headers: corsHeaders });
+    }
 
   try {
-    // Verify the user is authenticated with Supabase
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return errorResponse("Missing authorization header", 401);
+    const context = await deps.requireUser(req);
+    const url = new URL(req.url);
+
+    if (req.method === "POST" && url.searchParams.get("action") !== "token") {
+      return errorResponse("Invalid action", 400);
     }
 
-    const user = await getUserFromAuth(authHeader);
-    if (!user) {
-      return errorResponse("Unauthorized", 401);
+    if (req.method !== "GET" && req.method !== "POST") {
+      return errorResponse("Method not allowed", 405);
     }
 
-    const clientId = Deno.env.get("RUNSIGNUP_API_KEY");
-    const clientSecret = Deno.env.get("RUNSIGNUP_API_SECRET");
+    const clientId = deps.getEnv("RUNSIGNUP_API_KEY");
+    const clientSecret = deps.getEnv("RUNSIGNUP_API_SECRET");
 
     if (!clientId || !clientSecret) {
       return errorResponse("Missing RunSignUp API credentials", 500);
     }
 
-    const supabase = getSupabaseAdmin();
-    const url = new URL(req.url);
+    const supabase = deps.getAdmin();
 
     // POST: Exchange OAuth2 authorization code for tokens and store them
     if (req.method === "POST") {
-      const action = url.searchParams.get("action");
-      if (action !== "token") {
-        return errorResponse("Invalid action", 400);
-      }
-
       const body = await req.json();
       const { code, redirect_uri } = body;
 
@@ -131,11 +156,11 @@ Deno.serve(async (req: Request) => {
         return errorResponse("Missing code or redirect_uri", 400);
       }
 
-      const tokens = await exchangeCode(code, redirect_uri, clientId, clientSecret);
+      const tokens = await exchangeCode(code, redirect_uri, clientId, clientSecret, deps.fetch);
 
-      // Store tokens in the profiles table
+      // Credentials are service-only athlete data, never profile-view data.
       const { error: updateError } = await supabase
-        .from("profiles")
+        .from("athletes")
         .update({
           runsignup_access_token: tokens.access_token,
           runsignup_refresh_token: tokens.refresh_token,
@@ -143,7 +168,7 @@ Deno.serve(async (req: Request) => {
             Date.now() + tokens.expires_in * 1000
           ).toISOString(),
         })
-        .eq("id", user.id);
+        .eq("id", context.athleteId);
 
       if (updateError) {
         return errorResponse(`Failed to store tokens: ${updateError.message}`, 500);
@@ -152,16 +177,11 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: true, connected: true });
     }
 
-    // GET: Fetch registered races using stored token
-    if (req.method !== "GET") {
-      return errorResponse("Method not allowed", 405);
-    }
-
     // Retrieve stored RunSignUp tokens for this user
     const { data: profile, error: profileError } = await supabase
-      .from("profiles")
+      .from("athletes")
       .select("runsignup_access_token, runsignup_refresh_token, runsignup_token_expires_at")
-      .eq("id", user.id)
+      .eq("id", context.athleteId)
       .single();
 
     if (profileError || !profile?.runsignup_access_token) {
@@ -184,12 +204,13 @@ Deno.serve(async (req: Request) => {
           profile.runsignup_refresh_token,
           clientId,
           clientSecret,
+          deps.fetch,
         );
 
         accessToken = refreshed.access_token;
 
         await supabase
-          .from("profiles")
+          .from("athletes")
           .update({
             runsignup_access_token: refreshed.access_token,
             runsignup_refresh_token: refreshed.refresh_token ?? profile.runsignup_refresh_token,
@@ -197,7 +218,7 @@ Deno.serve(async (req: Request) => {
               Date.now() + refreshed.expires_in * 1000
             ).toISOString(),
           })
-          .eq("id", user.id);
+          .eq("id", context.athleteId);
       } catch {
         // Refresh failed — user needs to re-authorize
         return jsonResponse({
@@ -208,14 +229,19 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const races = await fetchRegisteredRaces(accessToken);
+    const races = await fetchRegisteredRaces(accessToken, deps.fetch);
 
     return jsonResponse({ connected: true, ...races });
   } catch (error) {
+    const guardResponse = userGuardErrorResponse(error, corsHeaders);
+    if (guardResponse) return guardResponse;
+
     console.error("Error in user-races:", error);
-    return errorResponse(
-      error instanceof Error ? error.message : "Internal server error",
-      500
-    );
+    return errorResponse("Internal server error", 500);
   }
-});
+  };
+}
+
+if (import.meta.main) {
+  Deno.serve(createHandler());
+}

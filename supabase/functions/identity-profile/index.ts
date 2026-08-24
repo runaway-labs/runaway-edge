@@ -1,10 +1,13 @@
 // Supabase Edge Function: identity-profile
 // Adlerian Psychology Phase 1 — builds runner identity from activity data + values
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
-
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
+import {
+  parseLegacyAthleteId,
+  resolveUserEndpointDependencies,
+  userGuardErrorResponse,
+  type UserEndpointDependencies,
+} from '../_shared/user-endpoint.ts'
 
 const VALID_IDENTITY_LABELS = [
   'Morning Runner',
@@ -72,10 +75,13 @@ function computeActivityStats(activities: Array<{
   return { totalRuns, totalDistanceKm, weekendRuns, avgElevation, hasComeback }
 }
 
+const DEFAULT_IDENTITY_SUMMARY = 'You show up consistently and keep building your running practice.'
+
 async function callClaudeIdentity(
   stats: ReturnType<typeof computeActivityStats>,
   why_i_run: string,
-  core_values: string[]
+  core_values: string[],
+  anthropicApiKey: string,
 ): Promise<{ runner_identity: RunnerIdentity; identity_summary: string }> {
   const prompt = `You are categorizing a runner's identity. Based on the data below, pick EXACTLY ONE identity label from this list:
 - Morning Runner (runs frequently, often early)
@@ -101,47 +107,56 @@ Respond with ONLY valid JSON, no markdown:
   "identity_summary": "<one sentence, second person, under 20 words, never mention pace/goals/PRs>"
 }`
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY || '',
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5',
-      max_tokens: 200,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error('Anthropic identity API error:', errorText)
-    throw new Error(`Anthropic API error: ${response.status}`)
-  }
-
-  const data = await response.json()
-  const rawText = data.content[0].text.trim()
-
-  let parsed: { runner_identity: string; identity_summary: string }
+  // Identity classification falls back to the default identity on any failure.
+  // Saving the profile must succeed even if Anthropic is unreachable or rate-limited —
+  // the runner can re-classify later by editing the mindset.
   try {
-    parsed = JSON.parse(rawText)
-  } catch {
-    console.error('Failed to parse Claude identity response:', rawText)
-    return { runner_identity: DEFAULT_IDENTITY, identity_summary: 'You show up consistently and keep building your running practice.' }
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': anthropicApiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5',
+        max_tokens: 200,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('Anthropic identity API error:', response.status, errorText)
+      return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
+    }
+
+    const data = await response.json()
+    const rawText = data.content[0].text.trim()
+
+    let parsed: { runner_identity: string; identity_summary: string }
+    try {
+      parsed = JSON.parse(rawText)
+    } catch {
+      console.error('Failed to parse Claude identity response:', rawText)
+      return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
+    }
+
+    const runner_identity = isValidIdentityLabel(parsed.runner_identity)
+      ? parsed.runner_identity
+      : DEFAULT_IDENTITY
+
+    return { runner_identity, identity_summary: parsed.identity_summary ?? DEFAULT_IDENTITY_SUMMARY }
+  } catch (err) {
+    console.error('Identity classification call failed (non-fatal):', err)
+    return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
   }
-
-  const runner_identity = isValidIdentityLabel(parsed.runner_identity)
-    ? parsed.runner_identity
-    : DEFAULT_IDENTITY
-
-  return { runner_identity, identity_summary: parsed.identity_summary ?? '' }
 }
 
 async function callClaudeGoalFraming(
   activeGoal: { id: number; title: string; goal_type: string },
-  runner_identity: RunnerIdentity
+  runner_identity: RunnerIdentity,
+  anthropicApiKey: string,
 ): Promise<string> {
   const prompt = `Write one sentence (under 20 words) framing this running goal in identity terms for a "${runner_identity}". Never mention numbers or pace. Second person.
 
@@ -154,7 +169,7 @@ Respond with ONLY the sentence, no JSON, no quotes.`
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY || '',
+      'x-api-key': anthropicApiKey,
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
@@ -174,27 +189,31 @@ Respond with ONLY the sentence, no JSON, no quotes.`
   return data.content[0].text.trim()
 }
 
-Deno.serve(async (req) => {
+export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
+  const deps = resolveUserEndpointDependencies(overrides)
+
+  return async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
 
   try {
     const { athlete_id, why_i_run, core_values, mode } = await req.json()
+    const requestedAthleteId = parseLegacyAthleteId(athlete_id)
+    const context = await deps.requireUser(req, requestedAthleteId)
 
-    if (!athlete_id || !why_i_run || !core_values || !Array.isArray(core_values) || core_values.length === 0) {
+    if (requestedAthleteId === null || !why_i_run || !core_values || !Array.isArray(core_values) || core_values.length === 0) {
       return new Response(
         JSON.stringify({ error: 'athlete_id, why_i_run, and core_values are required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    console.log('identity-profile request:', { athlete_id, mode })
+    const athleteId = context.athleteId
+    console.log('identity-profile request:', { athlete_id: athleteId, mode })
 
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    const supabaseAdmin = deps.getAdmin()
+    const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 
     // Fetch activities from last 90 days
     const cutoff = new Date()
@@ -203,7 +222,7 @@ Deno.serve(async (req) => {
     const { data: activities, error: activitiesError } = await supabaseAdmin
       .from('activities')
       .select('distance, elapsed_time, activity_date, elevation_gain, sport_type')
-      .eq('athlete_id', athlete_id)
+      .eq('athlete_id', athleteId)
       .gte('activity_date', cutoff.toISOString())
 
     if (activitiesError) {
@@ -214,7 +233,7 @@ Deno.serve(async (req) => {
     const { data: existingProfile, error: profileError } = await supabaseAdmin
       .from('athlete_ai_profiles')
       .select('core_memory')
-      .eq('athlete_id', athlete_id)
+      .eq('athlete_id', athleteId)
       .maybeSingle()
 
     if (profileError) {
@@ -225,7 +244,12 @@ Deno.serve(async (req) => {
     const stats = computeActivityStats(activityList)
 
     // Call Claude for identity classification
-    const { runner_identity, identity_summary } = await callClaudeIdentity(stats, why_i_run, core_values)
+    const { runner_identity, identity_summary } = await callClaudeIdentity(
+      stats,
+      why_i_run,
+      core_values,
+      anthropicApiKey,
+    )
 
     // Merge adlerian_profile into existing core_memory
     const existingCoreMemory = existingProfile?.core_memory ?? {}
@@ -246,7 +270,7 @@ Deno.serve(async (req) => {
     const { error: upsertProfileError } = await supabaseAdmin
       .from('athlete_ai_profiles')
       .upsert(
-        { athlete_id, core_memory: mergedCoreMemory },
+        { athlete_id: athleteId, core_memory: mergedCoreMemory },
         { onConflict: 'athlete_id' }
       )
 
@@ -257,7 +281,7 @@ Deno.serve(async (req) => {
 
     // Seed milestone rows
     const milestoneRows = MILESTONE_SEEDS.map((m) => ({
-      athlete_id,
+      athlete_id: athleteId,
       milestone_key: m.key,
       label: m.label,
       description: m.description,
@@ -276,7 +300,7 @@ Deno.serve(async (req) => {
     const { data: activeGoal, error: goalError } = await supabaseAdmin
       .from('running_goals')
       .select('id, title, goal_type')
-      .eq('athlete_id', athlete_id)
+      .eq('athlete_id', athleteId)
       .eq('is_active', true)
       .maybeSingle()
 
@@ -285,29 +309,43 @@ Deno.serve(async (req) => {
     }
 
     if (activeGoal) {
-      const goal_framing = await callClaudeGoalFraming(activeGoal, runner_identity)
+      // Goal-framing is best-effort — a Claude failure here must not abort
+      // the identity save. The identity write above has already succeeded.
+      try {
+        const goal_framing = await callClaudeGoalFraming(activeGoal, runner_identity, anthropicApiKey)
 
-      const { error: goalUpdateError } = await supabaseAdmin
-        .from('running_goals')
-        .update({ goal_framing })
-        .eq('id', activeGoal.id)
+        const { error: goalUpdateError } = await supabaseAdmin
+          .from('running_goals')
+          .update({ goal_framing })
+          .eq('id', activeGoal.id)
 
-      if (goalUpdateError) {
-        console.error('Error updating goal_framing:', goalUpdateError)
+        if (goalUpdateError) {
+          console.error('Error updating goal_framing:', goalUpdateError)
+        }
+      } catch (err) {
+        console.error('Goal-framing call failed (non-fatal):', err)
       }
     }
 
-    console.log('identity-profile complete:', { athlete_id, runner_identity })
+    console.log('identity-profile complete:', { athlete_id: athleteId, runner_identity })
 
     return new Response(
       JSON.stringify({ runner_identity, identity_summary, why_i_run, core_values }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error) {
+    const guardResponse = userGuardErrorResponse(error, corsHeaders)
+    if (guardResponse) return guardResponse
+
     console.error('Error in identity-profile function:', error)
     return new Response(
       JSON.stringify({ error: 'Internal error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
-})
+  }
+}
+
+if (import.meta.main) {
+  Deno.serve(createHandler())
+}

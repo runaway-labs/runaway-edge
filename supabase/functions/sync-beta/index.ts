@@ -2,11 +2,17 @@
 // Fetches activities from Strava and stores them in the database
 // Supports pagination for full sync and date range filtering
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import {
+  parseLegacyAthleteId,
+  resolveUserEndpointDependencies,
+  userGuardErrorResponse,
+  type UserEndpointDependencies,
+} from '../_shared/user-endpoint.ts'
 
 const STRAVA_API_BASE = 'https://www.strava.com/api/v3'
 const STRAVA_PAGE_SIZE = 100 // Max allowed by Strava API
+const MAX_SYNC_ACTIVITIES = 500
 
 interface StravaActivity {
   id: number
@@ -42,7 +48,10 @@ interface StravaActivity {
   laps?: any[]
 }
 
-Deno.serve(async (req) => {
+export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
+  const deps = resolveUserEndpointDependencies(overrides)
+
+  return async (req: Request) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -58,31 +67,60 @@ Deno.serve(async (req) => {
       before                   // Unix timestamp - only activities before this time
     } = body
 
-    if (!user_id) {
+    const requestedAthleteId = parseLegacyAthleteId(user_id)
+    const context = await deps.requireUser(req, requestedAthleteId)
+
+    if (requestedAthleteId === null) {
       return new Response(
         JSON.stringify({ error: { code: 'INVALID_REQUEST', message: 'user_id is required' } }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    console.log('Starting sync for user:', user_id, { max_activities, sync_all, after, before })
+    if (
+      !Number.isInteger(max_activities) ||
+      max_activities < 1 ||
+      max_activities > MAX_SYNC_ACTIVITIES
+    ) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: `max_activities must be an integer between 1 and ${MAX_SYNC_ACTIVITIES}`
+          }
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    if (sync_all !== false && sync_all !== undefined) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'sync_all is not available for user-triggered synchronization'
+          }
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const athleteId = context.athleteId
+    console.log('Starting sync for user:', athleteId, { max_activities, after, before })
+
+    const supabaseAdmin = deps.getAdmin()
 
     // Get athlete with OAuth tokens
     const { data: athlete, error: athleteError } = await supabaseAdmin
       .from('athletes')
       .select('id, access_token, refresh_token, token_expires_at, strava_connected')
-      .eq('id', user_id)
+      .eq('id', athleteId)
       .single()
 
     if (athleteError || !athlete) {
-      console.error('Athlete not found:', user_id)
+      console.error('Athlete not found:', athleteId)
       return new Response(
-        JSON.stringify({ error: { code: 'ATHLETE_NOT_FOUND', message: `Athlete ${user_id} not found` } }),
+        JSON.stringify({ error: { code: 'ATHLETE_NOT_FOUND', message: `Athlete ${athleteId} not found` } }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -100,7 +138,7 @@ Deno.serve(async (req) => {
 
     if (tokenExpiresAt && tokenExpiresAt <= new Date()) {
       console.log('Token expired, refreshing...')
-      const refreshed = await refreshStravaToken(athlete.refresh_token, supabaseAdmin, user_id)
+      const refreshed = await refreshStravaToken(athlete.refresh_token, supabaseAdmin, athleteId)
       if (!refreshed) {
         return new Response(
           JSON.stringify({ error: { code: 'TOKEN_REFRESH_FAILED', message: 'Failed to refresh Strava token' } }),
@@ -131,9 +169,8 @@ Deno.serve(async (req) => {
     console.log('Activity type map:', activityTypeMap)
 
     // Fetch activities from Strava
-    const effectiveLimit = sync_all ? Infinity : max_activities
-    console.log(`Fetching ${sync_all ? 'all' : `up to ${max_activities}`} activities from Strava...`)
-    const activities = await fetchStravaActivities(accessToken, effectiveLimit, after, before)
+    console.log(`Fetching up to ${max_activities} activities from Strava...`)
+    const activities = await fetchStravaActivities(accessToken, max_activities, after, before)
     console.log(`Fetched ${activities.length} activities from Strava`)
 
     if (activities.length === 0) {
@@ -153,7 +190,7 @@ Deno.serve(async (req) => {
 
     for (const activity of activities) {
       try {
-        const activityRecord = mapStravaActivity(activity, user_id, activityTypeMap)
+        const activityRecord = mapStravaActivity(activity, athleteId, activityTypeMap)
 
         console.log(`Upserting activity ${activity.id}: ${activity.name}`)
         console.log(`  - athlete_id: ${activityRecord.athlete_id}`)
@@ -210,13 +247,21 @@ Deno.serve(async (req) => {
     )
 
   } catch (error) {
+    const guardResponse = userGuardErrorResponse(error, corsHeaders)
+    if (guardResponse) return guardResponse
+
     console.error('Error in sync-beta:', error)
     return new Response(
-      JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: error.message } }),
+      JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
-})
+  }
+}
+
+if (import.meta.main) {
+  Deno.serve(createHandler())
+}
 
 async function refreshStravaToken(
   refreshToken: string,

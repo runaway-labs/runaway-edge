@@ -23,7 +23,7 @@
 
 - [x] Task 1: Contain database views, RLS, and privileged RPCs
 - [x] Task 2: Add a shared user-auth guard
-- [ ] Task 3: Migrate user-facing Edge Functions
+- [x] Task 3: Migrate user-facing Edge Functions
 - [ ] Task 4: Protect internal jobs and make delivery idempotent
 - [ ] Task 5: Persist and consume OAuth state
 - [ ] Task 6: Eliminate deployment drift

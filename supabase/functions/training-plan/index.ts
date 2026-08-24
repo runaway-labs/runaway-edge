@@ -1,10 +1,18 @@
 // Supabase Edge Function: training-plan
 // GET endpoint to fetch an existing weekly training plan
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
+import {
+  parseLegacyAthleteId,
+  resolveUserEndpointDependencies,
+  userGuardErrorResponse,
+  type UserEndpointDependencies,
+} from '../_shared/user-endpoint.ts'
 
-Deno.serve(async (req) => {
+export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
+  const deps = resolveUserEndpointDependencies(overrides)
+
+  return async (req: Request) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -27,10 +35,12 @@ Deno.serve(async (req) => {
   try {
     // Parse query parameters
     const url = new URL(req.url)
-    const athleteId = url.searchParams.get('athlete_id')
+    const athleteIdParam = url.searchParams.get('athlete_id')
     const weekStartDate = url.searchParams.get('week_start_date')
+    const requestedAthleteId = parseLegacyAthleteId(athleteIdParam)
+    const context = await deps.requireUser(req, requestedAthleteId)
 
-    if (!athleteId || !weekStartDate) {
+    if (requestedAthleteId === null || !weekStartDate) {
       return new Response(
         JSON.stringify({
           success: false,
@@ -43,19 +53,15 @@ Deno.serve(async (req) => {
       )
     }
 
-    console.log('Fetch training plan request:', { athleteId, weekStartDate })
+    console.log('Fetch training plan request:', { athleteId: context.athleteId, weekStartDate })
 
-    // Create Supabase client
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    const supabaseAdmin = deps.getAdmin()
 
     // Fetch the training plan
     const { data: plan, error } = await supabaseAdmin
       .from('weekly_training_plans')
       .select('*')
-      .eq('athlete_id', parseInt(athleteId))
+      .eq('athlete_id', context.athleteId)
       .eq('week_start_date', weekStartDate)
       .single()
 
@@ -94,11 +100,14 @@ Deno.serve(async (req) => {
     )
 
   } catch (error) {
+    const guardResponse = userGuardErrorResponse(error, corsHeaders)
+    if (guardResponse) return guardResponse
+
     console.error('Error in training-plan:', error)
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message
+        error: 'Internal server error'
       }),
       {
         status: 500,
@@ -106,4 +115,9 @@ Deno.serve(async (req) => {
       }
     )
   }
-})
+  }
+}
+
+if (import.meta.main) {
+  Deno.serve(createHandler())
+}
