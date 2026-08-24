@@ -66,7 +66,7 @@ export interface Alert {
   created_at: string;
 }
 
-export type DeliveryStatus = "pending" | "processing" | "submitting" | "sent" | "delivered" | "retryable" | "failed";
+export type DeliveryStatus = "pending" | "processing" | "submitting" | "ambiguous" | "sent" | "delivered" | "retryable" | "failed";
 export type DeliveryChannel = "sms" | "email";
 
 export interface AlertDelivery {

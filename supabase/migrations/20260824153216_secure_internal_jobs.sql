@@ -4,7 +4,7 @@ alter table public.alert_deliveries
 alter table public.alert_deliveries
   add constraint alert_deliveries_status_check
   check (status in (
-    'pending', 'processing', 'submitting', 'sent', 'delivered', 'retryable', 'failed'
+    'pending', 'processing', 'submitting', 'ambiguous', 'sent', 'delivered', 'retryable', 'failed'
   ));
 
 alter table public.alert_deliveries
@@ -34,7 +34,7 @@ $$;
 
 create index if not exists alert_deliveries_claimable_idx
   on public.alert_deliveries (status, lease_expires_at, created_at, id)
-  where status in ('pending', 'retryable', 'processing');
+  where status in ('pending', 'retryable', 'processing', 'submitting');
 
 create or replace function private.require_internal_job_secret()
 returns text
@@ -78,6 +78,42 @@ revoke all on function private.require_internal_job_secret()
 drop function if exists public.claim_pending_deliveries(integer);
 drop function if exists private.claim_pending_deliveries(integer);
 
+create or replace function private.reconcile_expired_submitting_deliveries()
+returns integer
+language sql
+volatile
+security invoker
+set search_path = ''
+as $$
+  with expired as materialized (
+    select delivery.id, delivery.claim_generation
+    from public.alert_deliveries as delivery
+    where delivery.status = 'submitting'
+      and delivery.lease_expires_at <= clock_timestamp()
+    for update skip locked
+  ), reconciled as (
+    update public.alert_deliveries as delivery
+    set status = 'ambiguous',
+        claim_generation = delivery.claim_generation + 1,
+        processing_started_at = null,
+        lease_expires_at = null,
+        error_message = 'provider submission outcome requires manual reconciliation',
+        updated_at = clock_timestamp()
+    from expired
+    where delivery.id = expired.id
+      and delivery.claim_generation = expired.claim_generation
+      and delivery.status = 'submitting'
+      and delivery.lease_expires_at <= clock_timestamp()
+    returning 1
+  )
+  select count(*)::integer from reconciled;
+$$;
+
+revoke all on function private.reconcile_expired_submitting_deliveries()
+  from public, anon, authenticated;
+grant execute on function private.reconcile_expired_submitting_deliveries()
+  to service_role;
+
 create function private.claim_pending_deliveries(batch_size integer)
 returns table (
   id uuid,
@@ -92,11 +128,15 @@ returns table (
   claim_generation bigint,
   lease_expires_at timestamptz
 )
-language sql
+language plpgsql
 volatile
 security invoker
 set search_path = ''
 as $$
+begin
+  perform private.reconcile_expired_submitting_deliveries();
+
+  return query
   with candidates as (
     select delivery.id
     from public.alert_deliveries as delivery
@@ -137,6 +177,7 @@ as $$
     delivery.processing_started_at,
     delivery.claim_generation,
     delivery.lease_expires_at;
+end;
 $$;
 
 revoke all on function private.claim_pending_deliveries(integer)

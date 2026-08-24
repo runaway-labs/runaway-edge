@@ -133,6 +133,33 @@ Result: not run. The safe availability gate exited `2` with `NOT RUN: TEST_DATAB
 
 ## Rollout dependencies
 
+### Remaining P2 review fixes
+
+Expired `submitting` rows are now deterministically reconciled by `private.reconcile_expired_submitting_deliveries()` before every normal claim. Reconciliation locks eligible rows with `FOR UPDATE SKIP LOCKED`, requires the observed claim generation and expired lease, advances the generation, clears the lease, and moves the row to terminal `ambiguous` with a stable manual-reconciliation error. The claim query does not include `ambiguous`, so these outcomes cannot retry automatically or remain stranded in `submitting`.
+
+The pgTAP concurrency scenario now opens explicit remote transactions for both dblink workers. Worker A claims and retains its transaction lock while an asynchronous two-second sleep runs; worker B claims and records completion during that sleep; both workers then explicitly commit. The suite asserts distinct IDs and worker B completion in under 1.5 seconds, demonstrating real overlap and `SKIP LOCKED` behavior. Before `SET LOCAL ROLE service_role`, the suite grants that role read access to the postgres-owned temporary result tables needed by the RPC assertions.
+
+P2 changed paths:
+
+- `.superpowers/sdd/2026-08-24-production-security-containment/progress.md`
+- `.superpowers/sdd/2026-08-24-production-security-containment/task-4-implementation-report.md`
+- `supabase/functions/_shared/types.ts`
+- `supabase/migrations/20260824153216_secure_internal_jobs.sql`
+- `supabase/tests/internal_jobs.sql`
+
+P2 verification results:
+
+- Combined safe local TypeScript regression run: exit `0`, 21/21 tests passed.
+- Node TypeScript syntax checks: exit `0`, 13/13 files passed.
+- SQL pgTAP plan audit: exit `0`; `plan(44)` matches 44 authored assertions.
+- Reconciliation/fencing static contract: exit `0`.
+- Explicit remote overlap and temporary-table ownership static contract: exit `0`.
+- `git diff --check`: exit `0`.
+- Requested combined Deno run: exit `127`, `zsh:1: command not found: deno`.
+- pgTAP database execution: not run, exit `2`: `TEST_DATABASE_URL` is unset; the harness refused to guess a database target. Docker remains unavailable, so no disposable PostgreSQL/Supabase runtime was available.
+
+No deployment, live database/function mutation, secret generation, or secret provisioning occurred.
+
 - Task 8 approval is required before generating or setting the 32-byte internal secret. A compliant generator is `openssl rand -hex 32`; Task 4 did not generate a value.
 - Task 8 must provision the identical canonical 64-character lowercase hexadecimal value as Edge secret `INTERNAL_JOB_SECRET` and Vault secret `internal_job_secret` before this migration/function set is activated.
 - Task 8 must apply the migration and deploy all seven guarded functions as one coordinated rollout; callers will fail closed until both secret stores are populated.

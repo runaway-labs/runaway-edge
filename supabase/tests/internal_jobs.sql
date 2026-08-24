@@ -44,11 +44,12 @@ insert into public.alert_deliveries (
   ('f4000000-0000-0000-0000-000000000011', 'f4000000-0000-0000-0000-000000000004', 'f4000000-0000-0000-0000-000000000003', 'email', 'task-4-runner@example.test', 'pending', 0, null),
   ('f4000000-0000-0000-0000-000000000012', 'f4000000-0000-0000-0000-000000000004', 'f4000000-0000-0000-0000-000000000003', 'email', 'task-4-runner@example.test', 'sent', 1, null),
   ('f4000000-0000-0000-0000-000000000013', 'f4000000-0000-0000-0000-000000000004', 'f4000000-0000-0000-0000-000000000003', 'email', 'task-4-runner@example.test', 'processing', 4, now() - interval '1 minute'),
-  ('f4000000-0000-0000-0000-000000000014', 'f4000000-0000-0000-0000-000000000004', 'f4000000-0000-0000-0000-000000000003', 'email', 'task-4-runner@example.test', 'processing', 7, now() + interval '10 minutes');
+  ('f4000000-0000-0000-0000-000000000014', 'f4000000-0000-0000-0000-000000000004', 'f4000000-0000-0000-0000-000000000003', 'email', 'task-4-runner@example.test', 'processing', 7, now() + interval '10 minutes'),
+  ('f4000000-0000-0000-0000-000000000015', 'f4000000-0000-0000-0000-000000000004', 'f4000000-0000-0000-0000-000000000003', 'email', 'task-4-runner@example.test', 'submitting', 9, now() - interval '1 minute');
 commit;
 
 begin;
-select plan(36);
+select plan(44);
 
 select ok(to_regprocedure('private.claim_pending_deliveries(integer)') is not null, 'private leased claim exists');
 select ok(to_regprocedure('public.claim_pending_deliveries(integer)') is not null, 'service-role claim wrapper exists');
@@ -112,42 +113,45 @@ create temporary table task4_claim_results (
   claim_generation bigint not null,
   lease_expires_at timestamptz not null
 ) on commit drop;
-create temporary table task4_claim_timing (started_at timestamptz not null) on commit drop;
-insert into task4_claim_timing values (clock_timestamp());
+create temporary table task4_claim_timing (
+  started_at timestamptz not null,
+  worker_b_finished_at timestamptz
+) on commit drop;
+insert into task4_claim_timing (started_at) values (clock_timestamp());
 
 select dblink_connect('task4_worker_a', :'task4_database_url');
 select dblink_connect('task4_worker_b', :'task4_database_url');
-select dblink_send_query(
-  'task4_worker_a',
-  $$with claimed as materialized (select * from public.claim_pending_deliveries(1)),
-    held as materialized (select pg_sleep(2))
-    select claimed.id, claimed.claim_generation, claimed.lease_expires_at
-    from claimed cross join held$$
-);
-select pg_sleep(0.1);
-select dblink_send_query(
-  'task4_worker_b',
-  $$with claimed as materialized (select * from public.claim_pending_deliveries(1)),
-    held as materialized (select pg_sleep(2))
-    select claimed.id, claimed.claim_generation, claimed.lease_expires_at
-    from claimed cross join held$$
-);
+select dblink_exec('task4_worker_a', 'begin');
+select dblink_exec('task4_worker_b', 'begin');
 insert into task4_claim_results
 select 'worker_a', delivery_id, claim_generation, lease_expires_at
-from dblink_get_result('task4_worker_a')
-  as result(delivery_id uuid, claim_generation bigint, lease_expires_at timestamptz);
+from dblink(
+  'task4_worker_a',
+  'select id, claim_generation, lease_expires_at from public.claim_pending_deliveries(1)'
+) as result(delivery_id uuid, claim_generation bigint, lease_expires_at timestamptz);
+select dblink_send_query('task4_worker_a', 'select true from pg_sleep(2)');
+select pg_sleep(0.1);
 insert into task4_claim_results
 select 'worker_b', delivery_id, claim_generation, lease_expires_at
-from dblink_get_result('task4_worker_b')
-  as result(delivery_id uuid, claim_generation bigint, lease_expires_at timestamptz);
+from dblink(
+  'task4_worker_b',
+  'select id, claim_generation, lease_expires_at from public.claim_pending_deliveries(1)'
+) as result(delivery_id uuid, claim_generation bigint, lease_expires_at timestamptz);
+update task4_claim_timing set worker_b_finished_at = clock_timestamp();
+select slept
+from dblink_get_result('task4_worker_a') as result(slept boolean);
+select dblink_exec('task4_worker_a', 'commit');
+select dblink_exec('task4_worker_b', 'commit');
 select dblink_disconnect('task4_worker_a');
 select dblink_disconnect('task4_worker_b');
 
 select is((select count(*) from task4_claim_results), 2::bigint, 'two workers claim while locks are held');
 select is((select count(distinct delivery_id) from task4_claim_results), 2::bigint, 'workers never claim the same ID');
 select cmp_ok(
-  extract(epoch from clock_timestamp() - (select started_at from task4_claim_timing)),
-  '<', 3.5, 'SKIP LOCKED prevents serial blocking'
+  extract(epoch from (
+    select worker_b_finished_at - started_at from task4_claim_timing
+  )),
+  '<', 1.5, 'worker B claims with SKIP LOCKED while worker A holds its transaction open'
 );
 select ok(
   not exists (
@@ -162,8 +166,29 @@ select ok(
   'claim atomically persists matching lease and fence'
 );
 
+select is(
+  (select status from public.alert_deliveries where id = 'f4000000-0000-0000-0000-000000000015'),
+  'ambiguous', 'expired submitting work reaches terminal manual reconciliation'
+);
+select is(
+  (select claim_generation from public.alert_deliveries where id = 'f4000000-0000-0000-0000-000000000015'),
+  10::bigint, 'expired submitting reconciliation advances the fence'
+);
+select ok(
+  (select lease_expires_at is null from public.alert_deliveries where id = 'f4000000-0000-0000-0000-000000000015'),
+  'expired submitting reconciliation clears the lease'
+);
+select ok(
+  not exists (
+    select 1 from task4_claim_results
+    where delivery_id = 'f4000000-0000-0000-0000-000000000015'
+  ),
+  'ambiguous submissions are never automatically reclaimed'
+);
+
 create temporary table task4_reclaimed as
 select * from public.claim_pending_deliveries(1);
+grant select on task4_claim_results, task4_reclaimed to service_role;
 select is((select id from task4_reclaimed), 'f4000000-0000-0000-0000-000000000013'::uuid, 'expired processing is reclaimable');
 select is((select claim_generation from task4_reclaimed), 5::bigint, 'reclaim increments the fence');
 select is((select count(*) from public.claim_pending_deliveries(1)), 0::bigint, 'unexpired processing is not reclaimable');
@@ -210,6 +235,31 @@ select is(
   true, 'current fence persists terminal failure'
 );
 reset role;
+
+select has_function(
+  'private',
+  'reconcile_expired_submitting_deliveries',
+  array[]::text[],
+  'expired submitting reconciliation exists'
+);
+
+select like(
+  pg_get_functiondef('private.reconcile_expired_submitting_deliveries()'::regprocedure),
+  '%status = ''ambiguous''%',
+  'expired submitting reconciliation reaches a terminal ambiguous state'
+);
+
+select like(
+  pg_get_functiondef('private.reconcile_expired_submitting_deliveries()'::regprocedure),
+  '%claim_generation = delivery.claim_generation + 1%',
+  'expired submitting reconciliation advances the fence'
+);
+
+select like(
+  pg_get_functiondef('private.claim_pending_deliveries(integer)'::regprocedure),
+  '%reconcile_expired_submitting_deliveries%',
+  'the reliable claim path invokes expired submitting reconciliation'
+);
 
 select * from finish();
 rollback;
