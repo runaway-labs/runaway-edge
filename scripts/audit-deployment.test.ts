@@ -84,6 +84,7 @@ function schema() {
     columns: {
       "public.profiles": ["id", "email", "full_name", "organization_name", "phone", "created_at", "updated_at"],
       "public.athletes": ["runsignup_access_token", "runsignup_refresh_token", "runsignup_token_expires_at"],
+      "public.activities": ["client_operation_id"],
       "private.oauth_states": ["state_hash", "provider", "auth_user_id", "athlete_id", "redirect_url", "expires_at", "consumed_at", "created_at"],
     },
     assumptions: Object.fromEntries(REQUIRED_SCHEMA_ASSUMPTIONS.map((name) => [name, true])),
@@ -157,8 +158,8 @@ Deno.test("manifest explicitly classifies exactly 55 deployed slugs", () => {
     FUNCTION_MANIFEST.filter((entry) => entry.classification === classification).length,
   ]));
   assert(counts["expected-active"] === 42, JSON.stringify(counts));
-  assert(counts["approved-retirement"] === 10, JSON.stringify(counts));
-  assert(counts["unknown-blocker"] === 3, JSON.stringify(counts));
+  assert(counts["approved-retirement"] === 13, JSON.stringify(counts));
+  assert(counts["unknown-blocker"] === 0, JSON.stringify(counts));
 });
 Deno.test("truncated function inventory and count mismatch fail closed", async () => {
   const value = inventory("pre");
@@ -213,17 +214,12 @@ Deno.test("missing and mismatched complete live bundle hashes fail closed", asyn
   assertIncludes((await auditDeployment(mismatch, repository(), "pre", manifest())).errors, "deployed bundle does not match local deployable bundle");
 });
 
-Deno.test("null reviewed baseline blocks deploy pre and post regardless of downloaded hash", async () => {
+Deno.test("all active baselines are reviewed and a null baseline blocks every mode", async () => {
   const checkedInBlockers = FUNCTION_MANIFEST
     .filter((entry) => entry.classification === "expected-active" && !entry.baselineBundleSha256)
     .map((entry) => entry.slug)
     .sort();
-  assert(
-    JSON.stringify(checkedInBlockers) === JSON.stringify([
-      "backfill-splits", "check-milestones", "feedback-workout", "generate-run-cues", "identity-profile",
-    ]),
-    "unexpected reviewed-baseline blockers: " + checkedInBlockers.join(", "),
-  );
+  assert(checkedInBlockers.length === 0, "reviewed-baseline blockers: " + checkedInBlockers.join(", "));
   const entries = manifest();
   entries[0].baselineBundleSha256 = null;
   for (const mode of ["deploy", "pre", "post"] as const) {
@@ -280,6 +276,15 @@ Deno.test("schema audit requires redirect_url and fresh-replay RunSignUp columns
   assertIncludes(errors, "public.athletes is missing runsignup_access_token");
 });
 
+Deno.test("schema audit requires the Task 7 activity idempotency and ownership contract", async () => {
+  const value = inventory("pre");
+  value.schema.columns["public.activities"] = [];
+  value.schema.assumptions["activities_client_operation_id_contract"] = false;
+  const errors = (await auditDeployment(value, repository(), "pre", manifest())).errors;
+  assertIncludes(errors, "public.activities is missing client_operation_id");
+  assertIncludes(errors, "schema assumption failed: activities_client_operation_id_contract");
+});
+
 Deno.test("all eight privileged RPC signatures and grants are mandatory", async () => {
   const omitted = inventory("pre");
   const missingSignature = omitted.privilegedRpcs.pop()!.signature;
@@ -320,12 +325,16 @@ Deno.test("every delivery and OAuth-state RPC requires exact service-only role g
 
 Deno.test("retirement entries require reviewed JWT and blocked restore metadata", async () => {
   const retirements = FUNCTION_MANIFEST.filter((entry) => entry.classification === "approved-retirement");
-  assert(retirements.length === 10, "expected ten retirements");
+  assert(retirements.length === 13, "expected thirteen retirements");
+  const jwtEnabled = retirements.filter((entry) => entry.verifyJwt).map((entry) => entry.slug).sort();
+  assert(
+    JSON.stringify(jwtEnabled) === JSON.stringify(["ultratracker", "upload-race-course"]),
+    "unexpected JWT-enabled retirement set: " + jwtEnabled.join(", "),
+  );
   for (const entry of retirements) {
-    assert(entry.verifyJwt === false, entry.slug + " must record deployed verify_jwt=false");
     assert(entry.restorePolicy === "blocked-pending-security-review", entry.slug + " must block restoration pending review");
     const metadata = JSON.parse(await Deno.readTextFile("supabase/retired-functions/" + entry.slug + "/archive.json"));
-    assert(metadata.verify_jwt === false, entry.slug + " archive verify_jwt mismatch");
+    assert(metadata.verify_jwt === entry.verifyJwt, entry.slug + " archive verify_jwt mismatch");
     assert(metadata.restore_policy === "blocked-pending-security-review", entry.slug + " archive restore policy mismatch");
   }
 });

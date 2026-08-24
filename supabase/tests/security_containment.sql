@@ -1,6 +1,6 @@
 begin;
 
-select plan(36);
+select plan(47);
 
 select ok(
   not has_table_privilege('anon', 'public.profiles', 'select'),
@@ -60,6 +60,63 @@ select col_type_is(
   'runsignup_token_expires_at',
   'timestamp with time zone',
   'fresh replay provides the typed RunSignUp token expiration on athletes'
+);
+
+select col_type_is(
+  'public',
+  'activities',
+  'client_operation_id',
+  'uuid',
+  'activity idempotency keys use the Task 7 UUID contract'
+);
+
+select col_is_null(
+  'public',
+  'activities',
+  'client_operation_id',
+  'legacy activities may retain a null client operation ID'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_constraint c
+    where c.conrelid = 'public.activities'::regclass
+      and c.contype = 'u'
+      and c.conkey = array[
+        (select attnum from pg_attribute where attrelid = c.conrelid and attname = 'athlete_id'),
+        (select attnum from pg_attribute where attrelid = c.conrelid and attname = 'client_operation_id')
+      ]::smallint[]
+  ),
+  'activities has an exact user-scoped unique constraint for PostgREST conflict inference'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_constraint c
+    join pg_index i on i.indexrelid = c.conindid
+    where c.conrelid = 'public.activities'::regclass
+      and c.contype = 'u'
+      and i.indisunique
+      and i.indisvalid
+      and i.indpred is null
+      and c.conkey = array[
+        (select attnum from pg_attribute where attrelid = c.conrelid and attname = 'athlete_id'),
+        (select attnum from pg_attribute where attrelid = c.conrelid and attname = 'client_operation_id')
+      ]::smallint[]
+  ),
+  'the exact conflict target has a valid non-partial unique index'
+);
+
+select ok(
+  (select relrowsecurity from pg_class where oid = 'public.activities'::regclass),
+  'activities enforces row-level security'
+);
+
+select ok(
+  (select count(*) = 3 from pg_policies where schemaname = 'public' and tablename = 'activities' and cmd in ('SELECT', 'INSERT', 'UPDATE')),
+  'activities has owner-scoped select, insert, and update policies'
 );
 
 select ok(
@@ -252,6 +309,51 @@ select throws_ok(
 );
 
 reset role;
+set local role authenticated;
+set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+select lives_ok(
+  $$insert into public.activities (id, athlete_id, name, client_operation_id)
+    values (900000011, 900000001, 'Task 7 first create', 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa')$$,
+  'user A can insert an idempotent activity for their athlete'
+);
+
+select results_eq(
+  $$insert into public.activities (id, athlete_id, name, client_operation_id)
+    values (900000012, 900000001, 'Task 7 replay', 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa')
+    on conflict (athlete_id, client_operation_id)
+    do update set name = excluded.name
+    returning id, name$$,
+  $$values (900000011::bigint, 'Task 7 replay'::text)$$,
+  'Task 7 replay resolves the exact conflict target and returns the canonical row'
+);
+
+select throws_ok(
+  $$insert into public.activities (id, athlete_id, name, client_operation_id)
+    values (900000013, 900000002, 'Cross-owner create', 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb')$$,
+  '42501',
+  null,
+  'user A cannot insert an activity for user B athlete'
+);
+
+set local request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+select lives_ok(
+  $$insert into public.activities (id, athlete_id, name, client_operation_id)
+    values (900000014, 900000002, 'Same operation UUID, other owner', 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa')$$,
+  'the same operation UUID is unique only within one athlete'
+);
+
+reset role;
+
+select lives_ok(
+  $$insert into public.activities (id, athlete_id, name, client_operation_id)
+    values
+      (900000015, 900000001, 'Legacy null one', null),
+      (900000016, 900000001, 'Legacy null two', null)$$,
+  'multiple legacy null operation IDs remain valid for one athlete'
+);
+
 set local role authenticated;
 set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 

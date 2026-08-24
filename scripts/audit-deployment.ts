@@ -99,24 +99,15 @@ const retirement = (
   restorePolicy,
 });
 
-const unknown = (
-  slug: string,
-  baselineBundleSha256: string,
-): ManifestEntry => ({
-  slug,
-  classification: "unknown-blocker",
-  baselineBundleSha256,
-});
-
 export const FUNCTION_MANIFEST: ManifestEntry[] = [
   active("activity-observations", "user", true, "b9bfe3782facd00094f1ab5af45a72e24c81f698d3e35824d2267ac0e72f2e7f"),
-  active("backfill-splits", "user", true, null),
+  active("backfill-splits", "user", true, "250149d08c7f277231b8d0c43efe08d8ea7f244398562511c04447602eb70ff7"),
   active("breakthrough-milestones", "internal", false, "888ac6dcb0c414aede7873b709965e031f349fbd58dbe62116a925bef39560cb"),
   active("chat", "user", true, "70c008cc141f5ef568e6c506221ca9222441be310cbcccdc9eeb244b47060dbb"),
   active("check-conditions", "internal", false, "e1b100087c661a7f1e92f4fd13034d68b1d7aa7a594362c773db555c1287b1ac"),
   active("check-hooks", "admin", true, "526a39f2ff602556faa12081460589a3074d3ed4b9beff7661392b70c3fd4f55"),
   active("check-hooks2", "admin", true, "770ba16d79687ae3c63a88b7955abcba17a1c50d7eb439a3430f7f6648553a54"),
-  active("check-milestones", "user", true, null),
+  active("check-milestones", "user", true, "77eedb8acedf8464d301dfc391ddd2c255be43e09e3d275b3aae962be9d2c231"),
   active("check-webhook-config", "admin", true, "86e65a0bf88ba42834150d1fe6e3bbb2a6f99a20815dfce3be4b784d4505a3ea"),
   active("classify-races", "user", true, "4c5c59fa66f41528fecc4fe01e5d503ed0a1514b853917dcde286127ef2faf90"),
   active("comprehensive-analysis", "user", true, "3f035893295ae47df46e30173fe95ed2d3dcbd5d43120a0e3816d01296ebd606"),
@@ -124,17 +115,17 @@ export const FUNCTION_MANIFEST: ManifestEntry[] = [
   active("daily-research-brief", "internal", false, "11c55026cac01272afbf8fb9474b0f14e35a3602fc3125c7301adfa06e26527a"),
   active("delete-account", "user", true, "0ae25d7d82a8ddb157e10342778a1a68b7876b83495f8e6e830e8d8ba6f27841"),
   active("disconnect", "user", true, "dafcced0a2cb32d68e1cb46f36ceac285ce50c30e1e88eab57ca44ad4bef5f77"),
-  active("feedback-workout", "user", true, null),
+  active("feedback-workout", "user", true, "1bc3a324102f63039d3590a08d0c0ba5908aafc7c65f711dc8908c7ee3506723"),
   active("fetch-daily-articles", "internal", false, "022ab14b111933dd43e0a811afd548c2d05ca0d2e5297d87fcc68ab80005f406"),
   active("garmin-auth", "user", true, "93cde8296b27a00dc20ce7c86301787a3f4126d0f41ed826a6364b37fcd78c79"),
   active("garmin-callback", "provider", false, "a35662afdfed12871125e62c798f8afe88c37017fcc15f923bf66e5fd19e83cc"),
   active("garmin-stats", "user", true, "0f06bbd2ffcd589ccdf49ec2414a081a05fed9e84eb50610b96a0501a67be73a"),
   active("garmin-webhook", "provider", false, "9cd453a7e1e4c338a10cab41ba7bd4589fb406f2a5e138aadeae60a25630eece"),
-  active("generate-run-cues", "user", true, null),
+  active("generate-run-cues", "user", true, "c980d0bbabd4710161372cdd03c4172f5a72cd771508c058feafb11a47ca1f5e"),
   active("generate-training-plan", "user", true, "8b58241dcefd400b1e9ff1ee9c8e2726fd54f96a1aac55a05b66cf03da360393"),
   active("get-race-course", "user", true, "5de8533a886e88ee727ae051046c87579396faf8aecc06aa08ff38b7df81acfd"),
   active("goal-assessment", "user", true, "0df9206c1d21b452c63fa7d0faa78bc4fa900ddddd2787a19ff199aef6321c92"),
-  active("identity-profile", "user", true, null),
+  active("identity-profile", "user", true, "22c65dc21db97fbfc17a7dee549d65dfa83801c1cbc13f340be9d5b7259a09b4"),
   active("import-runners", "admin", true, "b153018260f080d3f56d268b428036da81a9ecfa54ecc7f842bb42db7bd0eda8"),
   active("job-status", "user", true, "2938dc323f7c66fa5f30b954fc4f519a102c0c64d968ada64f7d0f7784f79536"),
   active("journal", "user", true, "4bfab588eaff6ae3c7b298cfbf9fa2dd24ee895372e6086cbb9c42fcff0421b4"),
@@ -161,9 +152,9 @@ export const FUNCTION_MANIFEST: ManifestEntry[] = [
   retirement("list-cron", "89eb52fed794b69ece00cae6a00edf606cfb75b3edfafd51b092881ce16ed6e4", false, "blocked-pending-security-review"),
   retirement("pre-run-brief", "05e5a78556777a6c13f496233ff265617351110457815142863a428acd53c286", false, "blocked-pending-security-review"),
   retirement("run-ddl", "ac9d54ec64b273c8ddf7d294693557461df22eed57851540b963dbf0e7b4c793", false, "blocked-pending-security-review"),
-  unknown("twin-engine", "7ae504e861032806e3f23cec1e0bb5090ec8f9075a8034c23354ae61f8911d57"),
-  unknown("ultratracker", "42421ceb4fa6c554ad009df99ae87e9c7dbfac2a2bdf37cf696cbad6ccd373f7"),
-  unknown("upload-race-course", "2634990ba81632a3292cd3680fc095695ddee75c9183d31d4f928e16cd880c4b"),
+  retirement("twin-engine", "4c3556a83fd61ef194a6e5095cef85b85e313d0d30de4de6586ce6acf63a2894", false, "blocked-pending-security-review"),
+  retirement("ultratracker", "cd52753fd39cc6211da32bf3e9e83f4a8973913df19f78b07e8803472354b556", true, "blocked-pending-security-review"),
+  retirement("upload-race-course", "382e0a2b01bbe0f40dcdc6e6210281e07facfc06688fe60c5174f4c3ac50df5e", true, "blocked-pending-security-review"),
 ];
 
 export const REQUIRED_MIGRATIONS = [
@@ -171,6 +162,7 @@ export const REQUIRED_MIGRATIONS = [
   "20260824153216",
   "20260824162713",
   "20260824172420",
+  "20260824201237",
 ];
 
 export const REQUIRED_SCHEMA_ASSUMPTIONS = [
@@ -188,6 +180,7 @@ export const REQUIRED_SCHEMA_ASSUMPTIONS = [
   "garmin_oauth_tokens_service_only",
   "runsignup_credentials_on_athletes",
   "profiles_credential_free",
+  "activities_client_operation_id_contract",
 ];
 
 const PROFILE_COLUMNS = [
@@ -196,6 +189,7 @@ const PROFILE_COLUMNS = [
 const RUNSIGNUP_COLUMNS = [
   "runsignup_access_token", "runsignup_refresh_token", "runsignup_token_expires_at",
 ];
+const ACTIVITY_IDEMPOTENCY_COLUMNS = ["client_operation_id"];
 const OAUTH_COLUMNS = [
   "state_hash", "provider", "auth_user_id", "athlete_id", "redirect_url",
   "expires_at", "consumed_at", "created_at",
@@ -548,6 +542,7 @@ export async function auditDeployment(
   const profileColumns = new Set(columns["public.profiles"] ?? []);
   if (profileColumns.size !== PROFILE_COLUMNS.length || PROFILE_COLUMNS.some((column) => !profileColumns.has(column))) errors.push("schema blocker: public.profiles columns do not exactly match the credential-free contract");
   for (const column of RUNSIGNUP_COLUMNS) if (!(columns["public.athletes"] ?? []).includes(column)) errors.push("schema blocker: public.athletes is missing " + column);
+  for (const column of ACTIVITY_IDEMPOTENCY_COLUMNS) if (!(columns["public.activities"] ?? []).includes(column)) errors.push("schema blocker: public.activities is missing " + column);
   for (const column of OAUTH_COLUMNS) if (!(columns["private.oauth_states"] ?? []).includes(column)) errors.push("schema blocker: private.oauth_states is missing " + column);
 
   const assumptions = inventory.schema?.assumptions ?? {};
@@ -703,7 +698,7 @@ const SERVICE_ONLY_RPC_VALUES_SQL = SERVICE_ONLY_RPC_SIGNATURES
 
 const LIVE_INVENTORY_SQL = [
   "select 'migration'::text as kind, version::text as key, null::text as value, true as passed from supabase_migrations.schema_migrations",
-  "union all select 'column', table_schema || '.' || table_name, column_name, true from information_schema.columns where (table_schema, table_name) in (('public','profiles'),('public','athletes'),('private','oauth_states'))",
+  "union all select 'column', table_schema || '.' || table_name, column_name, true from information_schema.columns where (table_schema, table_name) in (('public','profiles'),('public','athletes'),('public','activities'),('private','oauth_states'))",
   "union all select 'cron', coalesce(jobname, jobid::text), (regexp_match(command, '/functions/v1/([a-z0-9-]+)'))[1], true from cron.job where command ~ '/functions/v1/[a-z0-9-]+'",
   "union all select 'trigger', tg.tgname || ':' || n.nspname || '.' || c.relname, (regexp_match(pg_get_functiondef(p.oid), '/functions/v1/([a-z0-9-]+)'))[1], true from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace join pg_proc p on p.oid=tg.tgfoid where not tg.tgisinternal and pg_get_functiondef(p.oid) ~ '/functions/v1/[a-z0-9-]+'",
   "union all select 'assumption','profiles_security_invoker_and_scoped',null, exists(select 1 from pg_class c where c.oid='public.profiles'::regclass and 'security_invoker=true'=any(coalesce(c.reloptions,array[]::text[]))) and not has_table_privilege('anon','public.profiles','select') and has_table_privilege('authenticated','public.profiles','select')",
@@ -722,6 +717,7 @@ const LIVE_INVENTORY_SQL = [
   "union all select 'assumption','garmin_oauth_tokens_service_only',null, not has_table_privilege('anon','public.garmin_oauth_tokens','select') and not has_table_privilege('authenticated','public.garmin_oauth_tokens','select')",
   "union all select 'assumption','runsignup_credentials_on_athletes',null, (select count(*)=3 from information_schema.columns where table_schema='public' and table_name='athletes' and column_name in ('runsignup_access_token','runsignup_refresh_token','runsignup_token_expires_at'))",
   "union all select 'assumption','profiles_credential_free',null, not exists(select 1 from information_schema.columns where table_schema='public' and table_name='profiles' and column_name in ('runsignup_access_token','runsignup_refresh_token','runsignup_token_expires_at'))",
+  "union all select 'assumption','activities_client_operation_id_contract',null, exists(select 1 from information_schema.columns where table_schema='public' and table_name='activities' and column_name='client_operation_id' and data_type='uuid' and is_nullable='YES') and exists(select 1 from pg_constraint c where c.conrelid='public.activities'::regclass and c.contype='u' and (select array_agg(a.attname order by keys.ordinality) from unnest(c.conkey) with ordinality keys(attnum,ordinality) join pg_attribute a on a.attrelid=c.conrelid and a.attnum=keys.attnum)=array['athlete_id','client_operation_id']::name[]) and (select relrowsecurity from pg_class where oid='public.activities'::regclass) and (select count(*)=3 from pg_policies where schemaname='public' and tablename='activities' and policyname in ('Users can view own activities','Users can insert own activities','Users can update own activities') and cmd in ('SELECT','INSERT','UPDATE') and 'authenticated'=any(roles))",
 ].join("\n");
 
 async function fetchLiveInventory(

@@ -202,9 +202,9 @@ The deployment workflow downloads each live bundle separately and runs the
 `deploy` baseline gate before deploying without a global JWT override. After
 deployment, `pre` requires all active bundles and JWT settings to match while
 permitting exactly the archived retirement set. Task 8 may then delete only
-those ten slugs and must run `post`, which requires them absent. The three
-`unknown-blocker` slugs must be resolved in the manifest before any mode can
-authorize rollout.
+those 13 slugs and must run `post`, which requires them absent. Read-only Task 8
+review resolved the former unknown slugs `twin-engine`, `ultratracker`, and
+`upload-race-course` as approved retirements, leaving no unknown blocker.
 
 Recoverable reviewed sources for every approved retirement are under
 `supabase/retired-functions/`. These archives are outside the active deployment
@@ -212,6 +212,10 @@ directory, are retired and non-runnable, and are checked for embedded credential
 literals and hash integrity. They are recovery evidence only: restoration is
 blocked pending a dedicated security review, with explicit safe authentication
 and authorization required before any archived utility could become active.
+
+The production rollout sequence, dry-run evidence requirements, and rollback
+gates are documented in
+`docs/security/production-security-containment-runbook.md`.
 
 ## Import Pattern
 

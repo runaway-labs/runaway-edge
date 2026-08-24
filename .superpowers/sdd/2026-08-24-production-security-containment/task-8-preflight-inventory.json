@@ -1,0 +1,119 @@
+{
+  "generated_at": "2026-08-24",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "edge_head_before_task": "ae54bbc663f60a889dc27a9adc936777a2f38cbe",
+  "production_mutations": [],
+  "live_function_inventory": {
+    "read_only_list_succeeded": true,
+    "active_count": 55,
+    "classification": {
+      "expected_active": 42,
+      "approved_retirement": 13,
+      "unknown_blocker": 0
+    }
+  },
+  "reviewed_missing_baselines": [
+    {
+      "slug": "backfill-splits",
+      "file_count": 2,
+      "bundle_sha256": "250149d08c7f277231b8d0c43efe08d8ea7f244398562511c04447602eb70ff7",
+      "secret_scan": "passed"
+    },
+    {
+      "slug": "identity-profile",
+      "file_count": 3,
+      "bundle_sha256": "22c65dc21db97fbfc17a7dee549d65dfa83801c1cbc13f340be9d5b7259a09b4",
+      "secret_scan": "passed"
+    },
+    {
+      "slug": "feedback-workout",
+      "file_count": 3,
+      "bundle_sha256": "1bc3a324102f63039d3590a08d0c0ba5908aafc7c65f711dc8908c7ee3506723",
+      "secret_scan": "passed"
+    },
+    {
+      "slug": "check-milestones",
+      "file_count": 3,
+      "bundle_sha256": "77eedb8acedf8464d301dfc391ddd2c255be43e09e3d275b3aae962be9d2c231",
+      "secret_scan": "passed"
+    },
+    {
+      "slug": "generate-run-cues",
+      "file_count": 3,
+      "bundle_sha256": "c980d0bbabd4710161372cdd03c4172f5a72cd771508c058feafb11a47ca1f5e",
+      "secret_scan": "passed"
+    }
+  ],
+  "new_retirement_archives": [
+    {
+      "slug": "twin-engine",
+      "file_count": 2,
+      "bundle_sha256": "4c3556a83fd61ef194a6e5095cef85b85e313d0d30de4de6586ce6acf63a2894",
+      "verify_jwt": false,
+      "secret_scan": "passed",
+      "restore_policy": "blocked-pending-security-review"
+    },
+    {
+      "slug": "ultratracker",
+      "file_count": 2,
+      "bundle_sha256": "cd52753fd39cc6211da32bf3e9e83f4a8973913df19f78b07e8803472354b556",
+      "verify_jwt": true,
+      "secret_scan": "passed",
+      "restore_policy": "blocked-pending-security-review"
+    },
+    {
+      "slug": "upload-race-course",
+      "file_count": 3,
+      "bundle_sha256": "382e0a2b01bbe0f40dcdc6e6210281e07facfc06688fe60c5174f4c3ac50df5e",
+      "verify_jwt": true,
+      "secret_scan": "passed",
+      "restore_policy": "blocked-pending-security-review"
+    }
+  ],
+  "temporary_complete_bundle_downloads": {
+    "complete_count": 29,
+    "required_review_set_complete": true,
+    "full_audit_set_complete": false,
+    "missing_count": 26,
+    "missing": [
+      "import-runners",
+      "job-status",
+      "journal",
+      "max-data",
+      "micro-wins",
+      "notify-activity-insert",
+      "oauth-callback",
+      "process-deliveries",
+      "regenerate-training-plan",
+      "send-alert",
+      "strava-auth",
+      "strava-webhook",
+      "sync-beta",
+      "sync-race-directory",
+      "training-plan",
+      "user-races",
+      "backfill-training-zones",
+      "data-sci-audit",
+      "debug-query",
+      "fix-elevation",
+      "fix-elevation-stl",
+      "kill-cron",
+      "kill-research",
+      "list-cron",
+      "pre-run-brief",
+      "run-ddl"
+    ]
+  },
+  "local_checks": {
+    "audit_unit_tests": "20 passed; 0 failed",
+    "npx_deno": "not run: npm offline cache miss ENOTCACHED",
+    "supabase_local_reset": "not run: Docker daemon remained unresponsive",
+    "pgtap": "not run: local Supabase database unavailable",
+    "ios_xcodebuild": "not run at checkpoint: CoreSimulatorService unavailable in sandbox"
+  },
+  "dry_run_audits": {
+    "deploy": "not run: complete 55-function bundle set unavailable",
+    "pre": "not run: complete 55-function bundle set and sanitized live schema inventory unavailable"
+  },
+  "status": "preflight-blocked"
+}

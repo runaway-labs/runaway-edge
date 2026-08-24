@@ -29,7 +29,7 @@
 - [x] Task 4: Protect internal jobs and make delivery idempotent
 - [x] Task 5: Persist and consume OAuth state
 - [x] Task 6: Eliminate deployment drift
-- [ ] Task 7: Update iOS callers for secured backend contracts
+- [x] Task 7: Update iOS callers for secured backend contracts
 - [ ] Task 8: Deploy, verify, and rotate credentials
 
 ## Task 4 implementation notes
@@ -86,3 +86,11 @@
 - Removed `run-ddl` from active README inventory and labeled archives retired/non-runnable.
 - Bounded focused suite passed 18/18; `git diff --check` passed.
 - No production mutation occurred.
+
+## Task 8 preparation notes
+
+- User decisions resolved `twin-engine`, `ultratracker`, and `upload-race-course` as approved retirements. Read-only live bundles were retrieved, reviewed, secret-scanned, and prepared as non-runnable archives with their deployed `verify_jwt` values and `blocked-pending-security-review` restore policy.
+- Complete read-only live bundles were retrieved for `backfill-splits`, `identity-profile`, `feedback-workout`, `check-milestones`, and `generate-run-cues`; all passed secret scanning and now have canonical baseline hashes in the deployment manifest.
+- Generated `20260824201237_activities_client_operation_id.sql` through Supabase CLI 2.98.2. It adds nullable UUID `public.activities.client_operation_id`, an exact unique constraint on `(athlete_id, client_operation_id)`, and owner-scoped authenticated SELECT/INSERT/UPDATE policies required by the Task 7 PostgREST upsert contract.
+- Production deployment, migration application, function deletion, secret/Vault writes, cron changes, and credential rotation remain deferred to the controller after preflight review.
+- Checkpoint result: focused audit 20/20 passed. Full live bundle retrieval stopped at 29/55, leaving 26 exact bundle blockers; Docker remained unresponsive, so local reset/pgTAP did not run. CoreSimulatorService was unavailable, so iOS tests did not run. Deploy/pre dry-run audits remain not run and preflight is blocked.
