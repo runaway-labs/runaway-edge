@@ -220,7 +220,7 @@ entrypoint = "./functions/process-deliveries/index.ts"
 
 [functions.max-data]
 enabled = true
-verify_jwt = false
+verify_jwt = true
 entrypoint = "./functions/max-data/index.ts"
 
 [functions.breakthrough-milestones]
@@ -242,3 +242,86 @@ entrypoint = "./functions/fetch-daily-articles/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/sync-race-directory/index.ts"
+
+# Task 6: every repository-owned production function is explicitly classified.
+# Provider callbacks/webhooks and Task 4 internal jobs remain JWT-free because
+# their handlers perform the approved provider or internal-secret validation.
+[functions.activity-observations]
+enabled = true
+verify_jwt = true
+
+[functions.check-hooks]
+enabled = true
+verify_jwt = true
+
+[functions.check-hooks2]
+enabled = true
+verify_jwt = true
+
+[functions.check-webhook-config]
+enabled = true
+verify_jwt = true
+
+[functions.classify-races]
+enabled = true
+verify_jwt = true
+
+[functions.comprehensive-analysis]
+enabled = true
+verify_jwt = true
+
+[functions.daily-brief]
+enabled = true
+verify_jwt = true
+
+[functions.delete-account]
+enabled = true
+verify_jwt = true
+
+[functions.disconnect]
+enabled = true
+verify_jwt = true
+
+[functions.garmin-stats]
+enabled = true
+verify_jwt = true
+
+[functions.garmin-webhook]
+enabled = true
+verify_jwt = false
+
+[functions.generate-run-cues]
+enabled = true
+verify_jwt = true
+
+[functions.generate-training-plan]
+enabled = true
+verify_jwt = true
+
+[functions.get-race-course]
+enabled = true
+verify_jwt = true
+
+[functions.goal-assessment]
+enabled = true
+verify_jwt = true
+
+[functions.import-runners]
+enabled = true
+verify_jwt = true
+
+[functions.job-status]
+enabled = true
+verify_jwt = true
+
+[functions.micro-wins]
+enabled = true
+verify_jwt = true
+
+[functions.regenerate-training-plan]
+enabled = true
+verify_jwt = true
+
+[functions.send-alert]
+enabled = true
+verify_jwt = true

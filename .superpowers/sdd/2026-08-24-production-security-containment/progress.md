@@ -28,7 +28,7 @@
 - [x] Task 3: Migrate user-facing Edge Functions
 - [x] Task 4: Protect internal jobs and make delivery idempotent
 - [x] Task 5: Persist and consume OAuth state
-- [ ] Task 6: Eliminate deployment drift
+- [x] Task 6: Eliminate deployment drift
 - [ ] Task 7: Update iOS callers for secured backend contracts
 - [ ] Task 8: Deploy, verify, and rotate credentials
 
@@ -55,3 +55,10 @@
 - Safe local verification passed after review fixes: OAuth state and handler tests 16/16, TypeScript syntax 8/8, pgTAP plan 38/38, and athlete-binding/concurrency/cleanup/guard/callback/JWT/scoping/logging boundary checks. Deno is unavailable (exit 127); DB pgTAP was not run because `TEST_DATABASE_URL` is unset and Docker is unavailable.
 - Task 8 must apply `20260824162713_oauth_state_security.sql` and deploy all four OAuth functions/config as a coordinated rollout. No migration, deployment, secret provisioning, or live action occurred in Task 5.
 - Task 8 must handle legacy Garmin plaintext-state/PKCE rows before switching callbacks: block old initiation and drain/wait the full ten-minute TTL, or explicitly invalidate those temporary rows through an approved production action. Task 5 performed no production cleanup.
+
+## Task 6 implementation notes
+
+- Added `scripts/audit-deployment.ts` as the source-of-truth deployment manifest and deterministic checker. It verifies repository source/config presence, deployment status/JWT class, deployed hash availability, approved retirements, migration/schema prerequisites, and cron/trigger target safety from a sanitized read-only inventory.
+- All repository-owned functions now have explicit `config.toml` JWT settings. Provider callbacks/webhooks remain JWT-free with custom provider validation; the seven Task 4 internal jobs remain JWT-free with `X-Runaway-Internal-Secret`; all other user/admin handlers require the gateway JWT.
+- Read-only production inventory found 55 active functions, all ten approved retirement slugs still deployed, three undocumented deployed slugs (`twin-engine`, `ultratracker`, `upload-race-course`), and the three Task 1/4/5 migrations unapplied. The live `profiles` view still exposes all three RunSignUp credential columns. These are intentional Task 8 rollout blockers; no production mutation occurred.
+- Caller searches across the Edge worktree, Runaway iOS, Runaway platform, and production cron/trigger metadata found no references to any approved retirement slug, including `pre-run-brief` and `backfill-training-zones`.
