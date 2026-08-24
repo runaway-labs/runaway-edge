@@ -1,0 +1,10 @@
+{
+  "slug": "backfill-training-zones",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase get_edge_function",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "320e0d0003b43c7a743f425df6c5ce882736567ac97108551640dfd88dc2e48c",
+  "file_count": 2,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

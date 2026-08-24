@@ -1,0 +1,10 @@
+{
+  "slug": "data-sci-audit",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase get_edge_function",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "fb232f4c135819dfd1989eb22dbb3a586d285c743e080229e10395d741cd1eb3",
+  "file_count": 1,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

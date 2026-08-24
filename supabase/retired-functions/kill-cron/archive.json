@@ -1,0 +1,10 @@
+{
+  "slug": "kill-cron",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase get_edge_function",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "e905fe60d116928655c4010047497ffe6c6ea00c61c85ad10edbc30b613f6376",
+  "file_count": 1,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

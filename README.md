@@ -192,27 +192,24 @@ CI auto-deploys all functions on push to `main` via GitHub Actions (`.github/wor
 
 ### Production deployment containment (Task 6)
 
-`scripts/audit-deployment.ts` is the deployment source of truth. It maps every
-repository-owned function to its gateway JWT class, preserves the provider
-callback/webhook and internal-job custom-auth exceptions, and rejects a release
-when source/config/deployment inventory, migration prerequisites, credential
-view columns, or cron/trigger targets drift.
+`scripts/audit-deployment.ts` is the deployment source of truth for all 55
+functions observed on 2026-08-24. Every slug is classified as
+`expected-active`, `approved-retirement`, or `unknown-blocker`. The audit is
+fail-closed on partial inventory, local source/config additions, missing bundle
+dependencies, bundle hash drift, JWT drift, migration/schema assumptions, and
+cron/trigger drift.
 
-Task 8 must first collect a sanitized, read-only JSON inventory containing
-function `slug`, `status`, `verify_jwt`, and `ezbr_sha256` where available;
-migration versions; schema column names only; and cron/trigger target slugs.
-Then run:
+The deployment workflow downloads each live bundle separately and runs the
+`deploy` baseline gate before deploying without a global JWT override. After
+deployment, `pre` requires all active bundles and JWT settings to match while
+permitting exactly the archived retirement set. Task 8 may then delete only
+those ten slugs and must run `post`, which requires them absent. The three
+`unknown-blocker` slugs must be resolved in the manifest before any mode can
+authorize rollout.
 
-```bash
-deno run --allow-read --allow-env --allow-net scripts/audit-deployment.ts /path/to/read-only-inventory.json
-```
-
-The following are approved for retirement only after the audit passes and the
-Task 8 approval gate is open: `debug-query`, `run-ddl`, `fix-elevation`,
-`fix-elevation-stl`, `list-cron`, `kill-cron`, `kill-research`,
-`data-sci-audit`, `pre-run-brief`, and `backfill-training-zones`. Do not delete
-them in this change. The rollout command, rollback boundary, and the three
-currently undocumented deployed functions are recorded in the Task 6 report.
+Recoverable reviewed sources for every approved retirement are under
+`supabase/retired-functions/`. These archives are outside the active deployment
+directory and are checked for embedded credential literals and hash integrity.
 
 ## Import Pattern
 

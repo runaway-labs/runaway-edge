@@ -1,0 +1,10 @@
+{
+  "slug": "debug-query",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase get_edge_function",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "7431cff884fcdde2b18284eb352b37d6a2a66d84b40ea8f62942e95a29c903cd",
+  "file_count": 1,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

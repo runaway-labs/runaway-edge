@@ -62,3 +62,17 @@
 - All repository-owned functions now have explicit `config.toml` JWT settings. Provider callbacks/webhooks remain JWT-free with custom provider validation; the seven Task 4 internal jobs remain JWT-free with `X-Runaway-Internal-Secret`; all other user/admin handlers require the gateway JWT.
 - Read-only production inventory found 55 active functions, all ten approved retirement slugs still deployed, three undocumented deployed slugs (`twin-engine`, `ultratracker`, `upload-race-course`), and the three Task 1/4/5 migrations unapplied. The live `profiles` view still exposes all three RunSignUp credential columns. These are intentional Task 8 rollout blockers; no production mutation occurred.
 - Caller searches across the Edge worktree, Runaway iOS, Runaway platform, and production cron/trigger metadata found no references to any approved retirement slug, including `pre-run-brief` and `backfill-training-zones`.
+- Review fixes replace the partial checker with a 55-slug exact manifest, mandatory function/schema/cron/trigger sections, recursive deployable-bundle hashing, complete downloaded-live-bundle hashing, archive integrity and secret scans, and distinct deploy/pre/post gates.
+- The GitHub workflow no longer supplies a global JWT override. It runs Deno audit tests and the reviewed-baseline gate before deployment, deploys using `config.toml`, then runs the pre-retirement gate against freshly downloaded bundles.
+- All 10 approved retirement bundles are archived outside active function directories and passed embedded-secret scanning. Five expected-active baseline bundle retrievals were rate-limited after three attempts and remain explicitly baseline-unreviewed; runtime inventory hashes are still mandatory.
+- Fresh replay now adds the three typed RunSignUp credential columns to `public.athletes` in `20260824172420_add_runsignup_credentials_to_athletes.sql`; `public.profiles` remains credential-free. Database and static assertions cover the contract, including OAuth `redirect_url` and all Task 1/4/5 assumptions.
+
+### 2026-08-24 Task 6 review-fix checkpoint
+
+- Completed the 55-function exact manifest, deploy/pre/post fail-closed audits, local source/config/dependency/bundle-hash checks, workflow JWT correction, fresh-replay RunSignUp migration and schema assertions, complete retirement archives, and report relocation.
+- Bounded fallback verification passed all 13 focused audit tests using Node 24 native TypeScript stripping plus a temporary Deno API compatibility harness.
+- `npx --yes deno` was unavailable offline (`ENOTCACHED`); CI retains the requested `npx --yes deno test --allow-read scripts/audit-deployment.test.ts` invocation.
+- Archived retirement coverage is 10/10; no approved-retirement function lacks recoverable source.
+- Task 8 deletion/deployment remains blocked until unknown functions are resolved and a complete live preflight passes, including live bundle hashes and Tasks 1/4/5 schema, cron, and trigger assumptions.
+- No production mutation occurred.
+- Preserved source bytes mean the full cached whitespace check reports historical trailing whitespace in four retirement archives; active Task 6 paths pass when the archive tree alone is excluded.

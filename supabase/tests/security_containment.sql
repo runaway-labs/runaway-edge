@@ -1,6 +1,6 @@
 begin;
 
-select plan(33);
+select plan(36);
 
 select ok(
   not has_table_privilege('anon', 'public.profiles', 'select'),
@@ -36,6 +36,30 @@ select hasnt_column(
   'profiles',
   'runsignup_token_expires_at',
   'profiles omits the RunSignUp token expiration'
+);
+
+select col_type_is(
+  'public',
+  'athletes',
+  'runsignup_access_token',
+  'text',
+  'fresh replay provides the RunSignUp access-token column on athletes'
+);
+
+select col_type_is(
+  'public',
+  'athletes',
+  'runsignup_refresh_token',
+  'text',
+  'fresh replay provides the RunSignUp refresh-token column on athletes'
+);
+
+select col_type_is(
+  'public',
+  'athletes',
+  'runsignup_token_expires_at',
+  'timestamp with time zone',
+  'fresh replay provides the typed RunSignUp token expiration on athletes'
 );
 
 select ok(

@@ -1,0 +1,10 @@
+{
+  "slug": "pre-run-brief",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "read-only Supabase get_edge_function",
+  "reviewed_at": "2026-08-24",
+  "bundle_sha256": "56bed14cb4e4479d0ba596f7c4e507ab8615629f03af3d59016a05452d0af5a4",
+  "file_count": 3,
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}
