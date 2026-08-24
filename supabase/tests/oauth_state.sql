@@ -1,4 +1,3 @@
-\getenv task5_database_url TEST_DATABASE_URL
 
 set search_path = public, extensions;
 create extension if not exists pgtap with schema extensions;
@@ -79,7 +78,12 @@ values
   (
     950000002, 'f5000000-0000-0000-0000-000000000002',
     'task-5-oauth-b@example.test', 'Task 5 User B', 'athlete'
-  );
+  )
+on conflict (auth_user_id) do update
+set id = excluded.id,
+    email = excluded.email,
+    first_name = excluded.first_name,
+    role = excluded.role;
 
 set local role service_role;
 select public.create_oauth_state(
@@ -184,8 +188,24 @@ create temporary table task5_atomic_results (
   worker text not null,
   result_count bigint not null
 ) on commit drop;
-select dblink_connect('task5_worker_a', :'task5_database_url');
-select dblink_connect('task5_worker_b', :'task5_database_url');
+select dblink_connect(
+  'task5_worker_a',
+  format(
+    'host=%s port=%s dbname=%I user=postgres password=postgres',
+    inet_server_addr(),
+    inet_server_port(),
+    current_database()
+  )
+);
+select dblink_connect(
+  'task5_worker_b',
+  format(
+    'host=%s port=%s dbname=%I user=postgres password=postgres',
+    inet_server_addr(),
+    inet_server_port(),
+    current_database()
+  )
+);
 select dblink_exec('task5_worker_a', 'begin');
 select dblink_exec('task5_worker_b', 'begin');
 select dblink_exec('task5_worker_a', 'set local role service_role');
@@ -205,6 +225,8 @@ select is(dblink_is_busy('task5_worker_b'), 1, 'second consumer waits on the in-
 select dblink_exec('task5_worker_a', 'commit');
 insert into task5_atomic_results
 select 'worker_b', result_count
+from dblink_get_result('task5_worker_b') as result(result_count bigint);
+select result_count
 from dblink_get_result('task5_worker_b') as result(result_count bigint);
 select dblink_exec('task5_worker_b', 'commit');
 select dblink_disconnect('task5_worker_a');

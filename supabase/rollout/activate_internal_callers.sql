@@ -7,6 +7,7 @@ set local statement_timeout = '5min';
 do $$
 declare
   project_url text;
+  approved_project_url text;
 begin
   if current_setting('task8.endpoints_verified', true) is distinct from 'true' then
     raise exception 'set PGOPTIONS=-c task8.endpoints_verified=true only after endpoint smoke tests pass';
@@ -22,8 +23,15 @@ begin
   from vault.decrypted_secrets
   where name = 'supabase_url'
   limit 1;
-  if project_url is null or project_url !~ '^https?://[^/]+$' then
+  approved_project_url := current_setting('task8.approved_project_url', true);
+  if project_url is null or project_url !~ '^https://[^/]+$' then
     raise exception 'Vault supabase_url is missing or malformed';
+  end if;
+  if approved_project_url is null
+    or approved_project_url !~ '^https://[^/]+$'
+    or project_url <> approved_project_url
+  then
+    raise exception 'Vault supabase_url does not match the independently approved HTTPS project URL';
   end if;
 end
 $$;
@@ -59,10 +67,10 @@ begin
     from cron.job
     where jobname = expected.jobname;
 
-    if existing_count > 1 then
-      raise exception 'duplicate cron job %', expected.jobname;
+    if existing_count <> 1 then
+      raise exception 'expected exactly one existing cron job %, found %', expected.jobname, existing_count;
     end if;
-    if existing_count = 1 and existing_schedule <> expected.schedule then
+    if existing_schedule <> expected.schedule then
       raise exception 'cron schedule drift for %: expected %, found %',
         expected.jobname, expected.schedule, existing_schedule;
     end if;
@@ -76,11 +84,7 @@ begin
       end
     );
 
-    if existing_count = 0 then
-      existing_jobid := cron.schedule(expected.jobname, expected.schedule, caller_command);
-    else
-      perform cron.alter_job(existing_jobid, command := caller_command);
-    end if;
+    perform cron.alter_job(existing_jobid, command := caller_command);
     perform cron.alter_job(existing_jobid, active := expected.active);
   end loop;
 end

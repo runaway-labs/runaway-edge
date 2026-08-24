@@ -505,11 +505,12 @@ export function auditActivationSources(base: string, activation: string, rollbac
     errors.push("base migration must not install HTTP cron callers");
   }
   for (const marker of [
-    "task8.endpoints_verified", "internal_job_secret", "supabase_url",
+    "task8.endpoints_verified", "task8.approved_project_url", "internal_job_secret", "supabase_url",
     "runaway_activity_insert_internal", "cron.alter_job",
   ]) {
     if (!activation.includes(marker)) errors.push("activation script is missing " + marker);
   }
+  if (activation.includes("cron.schedule")) errors.push("activation must not recreate missing production schedules");
   for (const legacy of ["activity-insert-notification", "on_activity_insert"]) {
     if (!activation.includes(legacy)) errors.push("activation script does not remove legacy caller " + legacy);
   }
@@ -625,7 +626,10 @@ export async function auditDeployment(
     if (!deployed.bundle_sha256) errors.push(entry.slug + ": complete live bundle hash is missing");
 
     if (entry.classification === "expected-active") {
-      const cohortIsDeployed = entry.rolloutCohort !== undefined && deployedRolloutCohorts.has(entry.rolloutCohort);
+      // Garmin initiation is intentionally blocked with the reviewed local
+      // garmin-auth bundle before the user/internal cohorts deploy.
+      const cohortIsDeployed = (entry.slug === "garmin-auth" && mode !== "deploy")
+        || (entry.rolloutCohort !== undefined && deployedRolloutCohorts.has(entry.rolloutCohort));
       if (!cohortIsDeployed) {
         if (entry.baselineBundleSha256 && deployed.bundle_sha256 !== entry.baselineBundleSha256) {
           errors.push(entry.slug + (mode === "deploy"

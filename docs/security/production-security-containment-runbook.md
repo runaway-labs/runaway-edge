@@ -11,10 +11,12 @@ export DB_URL='<production-database-url>'
 export SUPABASE_URL="https://${PROJECT_REF}.supabase.co"
 export EVIDENCE_DIR="$REPO/.task8-production-evidence/$(date -u +%Y%m%dT%H%M%SZ)"
 export TASK7_REPO=/private/tmp/runaway-ios-security-compatibility
-export TASK7_COMMIT=39efc1a0f4c8c09ef529600eccf422ab959912ed
+export TASK7_COMMIT='1678581de84bae903a687aa198cb21b474e81500'
 mkdir -p "$EVIDENCE_DIR" && chmod 700 "$EVIDENCE_DIR"
 test "$(git -C "$REPO" rev-parse HEAD)" = '<approved-task-8-commit>'
 test "$(git -C "$TASK7_REPO" rev-parse HEAD)" = "$TASK7_COMMIT"
+test -z "$(git -C "$REPO" status --porcelain --untracked-files=all)"
+test -z "$(git -C "$TASK7_REPO" status --porcelain --untracked-files=all)"
 ```
 
 Stop on any mismatch, incomplete inventory, smoke failure, active Garmin initiation, unexpired Garmin state, or unexpected drift.
@@ -32,7 +34,7 @@ All 23 deferred functions stay at captured live bundle hashes and JWT flags. Bar
 
 ## Phase 0: compatible-app release gate
 
-Task 7 source is only `/private/tmp/runaway-ios-security-compatibility` at `39efc1a0f4c8c09ef529600eccf422ab959912ed`, not the original checkout.
+Task 7 source is only `/private/tmp/runaway-ios-security-compatibility` at the approved clean `TASK7_COMMIT`, not the original checkout. The commit must contain the tested actor-isolation and nil-`localRecordID` queue-coalescing fixes.
 
 1. Build and sign that commit.
 2. Verify `client_operation_id`, additive activity-schema compatibility, and contained OAuth errors.
@@ -57,6 +59,11 @@ cd "$REPO"
 npx --yes deno test --allow-read scripts/audit-deployment.test.ts
 npx --yes deno run --allow-read --allow-env --allow-net scripts/audit-deployment.ts --mode deploy --remote-bundles "$EVIDENCE_DIR/live-bundles-before" > "$EVIDENCE_DIR/audit-deploy.json"
 test "$(jq '.errors|length' "$EVIDENCE_DIR/audit-deploy.json")" = 0
+mkdir -p "$EVIDENCE_DIR/baseline-checkout/supabase/functions"
+cp -R "$EVIDENCE_DIR/live-bundles-before/." "$EVIDENCE_DIR/baseline-checkout/supabase/functions/"
+jq -r '.comparisons[] | "[functions.\(.slug)]\nverify_jwt = \(.deployedVerifyJwt)\n"' "$EVIDENCE_DIR/audit-deploy.json" > "$EVIDENCE_DIR/baseline-checkout/supabase/config.toml"
+test "$(find "$EVIDENCE_DIR/baseline-checkout/supabase/functions" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" = 55
+chmod -R a-w "$EVIDENCE_DIR/baseline-checkout"
 ```
 
 Capture with a read-only database role:
@@ -89,6 +96,8 @@ test "$status" = 503
 test "$(jq -r .code "$EVIDENCE_DIR/garmin-block.json")" = GARMIN_OAUTH_INITIATION_BLOCKED
 sleep 600
 ```
+
+From this point through Phase 6, `cohort-user` and `cohort-internal` audits intentionally treat `garmin-auth` as already deployed while the other OAuth functions remain pinned to baseline. Refresh bundles after the block deployment and require that only `garmin-auth` differs from the Phase 1 active baseline.
 
 Require zero from this query without deleting rows; recheck every 60 seconds if nonzero and do not proceed:
 
@@ -136,7 +145,7 @@ Vault SQL must create/update exactly `internal_job_secret` and verify `supabase_
 Only after all internal endpoint smokes pass:
 
 ```sh
-PGOPTIONS='-c task8.endpoints_verified=true' psql "$DB_URL" -v ON_ERROR_STOP=1 -X -f supabase/rollout/activate_internal_callers.sql
+PGOPTIONS="-c task8.endpoints_verified=true -c task8.approved_project_url=$SUPABASE_URL" psql "$DB_URL" -v ON_ERROR_STOP=1 -X -f supabase/rollout/activate_internal_callers.sql
 ```
 
 Require exactly one `runaway_activity_insert_internal`, no legacy trigger, five secret-only cron commands, three originally active jobs active, and `process-deliveries-job` plus `sync-race-directory-job` inactive with schedules unchanged. Smoke one insert/one notification, invoke active jobs once, and prove inactive jobs did not run.
@@ -151,7 +160,18 @@ Run `--mode cohort-oauth`; it requires dedicated callers. Smoke Strava flow, Gar
 
 ## Phase 8: retirement with before/after smoke
 
-Download all bundles and run `--mode pre`; repeat all smokes. Retire only the 13 manifest-approved archives, one explicit slug at a time, refreshing inventory after each. Never deploy or retire a deferred function. Then download all bundles, run `--mode post`, repeat all smokes, and prove no fleet deployment.
+Download all bundles and run `--mode pre`; repeat all smokes. Retire exactly these 13 reviewed archives, one explicit slug at a time:
+
+```sh
+RETIREMENT_SLUGS='backfill-training-zones data-sci-audit debug-query fix-elevation fix-elevation-stl kill-cron kill-research list-cron pre-run-brief run-ddl twin-engine ultratracker upload-race-course'
+for slug in $RETIREMENT_SLUGS; do
+  supabase functions delete "$slug" --project-ref "$PROJECT_REF" || exit 1
+  supabase functions list --project-ref "$PROJECT_REF" --output json > "$EVIDENCE_DIR/functions-after-$slug.json" || exit 1
+  test "$(jq --arg slug "$slug" '[.[] | select(.slug == $slug)] | length' "$EVIDENCE_DIR/functions-after-$slug.json")" = 0 || exit 1
+done
+```
+
+Never deploy or retire a deferred function. Then download all bundles, run `--mode post`, repeat all smokes, and prove no fleet deployment. Any restore remains blocked pending the archive-specific security review.
 
 ## Phase 9: unblock Garmin
 

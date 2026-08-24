@@ -50,7 +50,7 @@ select
   created_at,
   updated_at
 from public.athletes
-where auth_user_id is not null;
+where auth_user_id = (select auth.uid());
 
 create trigger profiles_on_insert
   instead of insert on public.profiles
@@ -60,6 +60,7 @@ create trigger profiles_on_update
   instead of update on public.profiles
   for each row execute function public.profiles_update_trigger();
 
+revoke all on public.profiles from anon, authenticated;
 grant select on public.profiles to authenticated;
 
 -- Preserve definitions and output columns for catalog views that exist. Clean

@@ -63,15 +63,15 @@ select is(
   'both legacy activity callers remain absent'
 );
 
-select like(
-  pg_get_functiondef('public.notify_activity_insert()'::regprocedure),
-  '%X-Runaway-Internal-Secret%',
+select ok(
+  pg_get_functiondef('public.notify_activity_insert()'::regprocedure)
+    like '%X-Runaway-Internal-Secret%',
   'the sole activity caller sends the dedicated-secret header'
 );
 
-select unlike(
-  pg_get_functiondef('public.notify_activity_insert()'::regprocedure),
-  '%Authorization%',
+select ok(
+  pg_get_functiondef('public.notify_activity_insert()'::regprocedure)
+    not like '%Authorization%',
   'the sole activity caller has no bearer fallback'
 );
 

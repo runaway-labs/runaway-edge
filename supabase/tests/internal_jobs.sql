@@ -1,5 +1,4 @@
 \set ON_ERROR_STOP on
-\getenv task4_database_url TEST_DATABASE_URL
 
 set search_path = public, extensions;
 create extension if not exists pgtap with schema extensions;
@@ -116,8 +115,24 @@ create temporary table task4_claim_timing (
 ) on commit drop;
 insert into task4_claim_timing (started_at) values (clock_timestamp());
 
-select dblink_connect('task4_worker_a', :'task4_database_url');
-select dblink_connect('task4_worker_b', :'task4_database_url');
+select dblink_connect(
+  'task4_worker_a',
+  format(
+    'host=%s port=%s dbname=%I user=postgres password=postgres',
+    inet_server_addr(),
+    inet_server_port(),
+    current_database()
+  )
+);
+select dblink_connect(
+  'task4_worker_b',
+  format(
+    'host=%s port=%s dbname=%I user=postgres password=postgres',
+    inet_server_addr(),
+    inet_server_port(),
+    current_database()
+  )
+);
 select dblink_exec('task4_worker_a', 'begin');
 select dblink_exec('task4_worker_b', 'begin');
 insert into task4_claim_results
@@ -135,6 +150,8 @@ from dblink(
   'select id, claim_generation, lease_expires_at from public.claim_pending_deliveries(1)'
 ) as result(delivery_id uuid, claim_generation bigint, lease_expires_at timestamptz);
 update task4_claim_timing set worker_b_finished_at = clock_timestamp();
+select slept
+from dblink_get_result('task4_worker_a') as result(slept boolean);
 select slept
 from dblink_get_result('task4_worker_a') as result(slept boolean);
 select dblink_exec('task4_worker_a', 'commit');
@@ -216,19 +233,19 @@ select is(
   'sent:current-id', 'only current finalizer writes provider result'
 );
 select is(
-  public.finalize_delivery((select min(delivery_id) from task4_claim_results), 1, 'retryable', null, 'pre-provider', null),
+  public.finalize_delivery((select delivery_id from task4_claim_results order by delivery_id limit 1), 1, 'retryable', null, 'pre-provider', null),
   true, 'known pre-provider failure finalizes from processing'
 );
 select is(
-  (select status from public.alert_deliveries where id = (select min(delivery_id) from task4_claim_results)),
+  (select status from public.alert_deliveries where id = (select delivery_id from task4_claim_results order by delivery_id limit 1)),
   'retryable', 'pre-provider retry state is persisted'
 );
 select is(
-  public.finalize_delivery((select max(delivery_id) from task4_claim_results), 0, 'failed', null, 'stale', null),
+  public.finalize_delivery((select delivery_id from task4_claim_results order by delivery_id desc limit 1), 0, 'failed', null, 'stale', null),
   false, 'stale failure finalizer is rejected'
 );
 select is(
-  public.finalize_delivery((select max(delivery_id) from task4_claim_results), 1, 'failed', null, 'terminal', null),
+  public.finalize_delivery((select delivery_id from task4_claim_results order by delivery_id desc limit 1), 1, 'failed', null, 'terminal', null),
   true, 'current fence persists terminal failure'
 );
 reset role;
@@ -240,21 +257,21 @@ select has_function(
   'expired submitting reconciliation exists'
 );
 
-select like(
-  pg_get_functiondef('private.reconcile_expired_submitting_deliveries()'::regprocedure),
-  '%status = ''ambiguous''%',
+select ok(
+  pg_get_functiondef('private.reconcile_expired_submitting_deliveries()'::regprocedure)
+    like '%status = ''ambiguous''%',
   'expired submitting reconciliation reaches a terminal ambiguous state'
 );
 
-select like(
-  pg_get_functiondef('private.reconcile_expired_submitting_deliveries()'::regprocedure),
-  '%claim_generation = delivery.claim_generation + 1%',
+select ok(
+  pg_get_functiondef('private.reconcile_expired_submitting_deliveries()'::regprocedure)
+    like '%claim_generation = delivery.claim_generation + 1%',
   'expired submitting reconciliation advances the fence'
 );
 
-select like(
-  pg_get_functiondef('private.claim_pending_deliveries(integer)'::regprocedure),
-  '%reconcile_expired_submitting_deliveries%',
+select ok(
+  pg_get_functiondef('private.claim_pending_deliveries(integer)'::regprocedure)
+    like '%reconcile_expired_submitting_deliveries%',
   'the reliable claim path invokes expired submitting reconciliation'
 );
 
@@ -266,5 +283,6 @@ delete from public.alert_deliveries where alert_id = 'f4000000-0000-0000-0000-00
 delete from public.alerts where id = 'f4000000-0000-0000-0000-000000000004';
 delete from public.runners where id = 'f4000000-0000-0000-0000-000000000003';
 delete from public.races where id = 'f4000000-0000-0000-0000-000000000002';
+delete from public.athletes where auth_user_id = 'f4000000-0000-0000-0000-000000000001';
 delete from auth.users where id = 'f4000000-0000-0000-0000-000000000001';
 commit;
