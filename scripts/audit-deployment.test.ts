@@ -357,4 +357,5 @@ Deno.test("README never presents archived utilities as active or runnable", asyn
   assert(readme.includes("retired and non-runnable"), "README must identify archives as retired and non-runnable");
   assert(readme.includes("blocked pending a dedicated security review"), "README must block automatic restoration");
   assert(!/migrations\/\s+#\s+\d+\s+PostgreSQL migrations/.test(readme), "README migration documentation must not hardcode a drifting count");
+  assert(!/\[\d+\s+functions\]/.test(readme), "README function documentation must not hardcode a drifting count");
 });

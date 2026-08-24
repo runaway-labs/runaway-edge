@@ -125,3 +125,10 @@ views, anonymous privileged RPCs, or a global JWT bypass.
 - Focused bounded suite: `19 passed; 0 failed`, including all 30 per-signature wrong/omitted role combinations and missing-signature coverage.
 - Static check: `git diff --check`, exit 0.
 - Production mutations: none.
+
+## README source-derived inventory wording
+
+- Replaced the stale active-function directory count with wording derived from `supabase/functions/`; migration wording remains source-derived from `supabase/migrations/`.
+- Added focused regression coverage rejecting hardcoded README function or migration directory counts.
+- Focused bounded suite: `19 passed; 0 failed`.
+- Static check: `git diff --check`, exit 0.

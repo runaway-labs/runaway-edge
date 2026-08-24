@@ -20,7 +20,7 @@ runaway-edge/
     │   │   ├── twilio.ts
     │   │   ├── weather-api.ts
     │   │   └── aqi-api.ts
-    │   └── [37 functions]        # See function inventory below
+    │   └── [function directories] # Derived from supabase/functions/
     └── migrations/               # PostgreSQL migrations (derived from this directory)
 ```
 
