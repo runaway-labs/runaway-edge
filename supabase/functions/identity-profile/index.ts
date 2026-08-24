@@ -20,6 +20,13 @@ const VALID_IDENTITY_LABELS = [
 type RunnerIdentity = typeof VALID_IDENTITY_LABELS[number]
 
 const DEFAULT_IDENTITY: RunnerIdentity = 'Consistent Builder'
+const ANTHROPIC_IDENTITY_FAILED = 'ANTHROPIC_IDENTITY_FAILED'
+const ANTHROPIC_GOAL_FRAMING_FAILED = 'ANTHROPIC_GOAL_FRAMING_FAILED'
+
+interface IdentityDependencies extends UserEndpointDependencies {
+  fetch: typeof fetch
+  getEnv: (name: string) => string | undefined
+}
 
 const MILESTONE_SEEDS = [
   { key: 'first_run', label: 'First Step', description: 'Completed your first run with Runaway' },
@@ -82,6 +89,7 @@ async function callClaudeIdentity(
   why_i_run: string,
   core_values: string[],
   anthropicApiKey: string,
+  fetchImpl: typeof fetch,
 ): Promise<{ runner_identity: RunnerIdentity; identity_summary: string }> {
   const prompt = `You are categorizing a runner's identity. Based on the data below, pick EXACTLY ONE identity label from this list:
 - Morning Runner (runs frequently, often early)
@@ -111,7 +119,7 @@ Respond with ONLY valid JSON, no markdown:
   // Saving the profile must succeed even if Anthropic is unreachable or rate-limited —
   // the runner can re-classify later by editing the mindset.
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetchImpl('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -126,8 +134,10 @@ Respond with ONLY valid JSON, no markdown:
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('Anthropic identity API error:', response.status, errorText)
+      console.error(ANTHROPIC_IDENTITY_FAILED, {
+        operation: 'identity_classification',
+        status: response.status,
+      })
       return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
     }
 
@@ -138,7 +148,7 @@ Respond with ONLY valid JSON, no markdown:
     try {
       parsed = JSON.parse(rawText)
     } catch {
-      console.error('Failed to parse Claude identity response:', rawText)
+      console.error('ANTHROPIC_IDENTITY_PARSE_FAILED', { operation: 'identity_classification' })
       return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
     }
 
@@ -147,8 +157,8 @@ Respond with ONLY valid JSON, no markdown:
       : DEFAULT_IDENTITY
 
     return { runner_identity, identity_summary: parsed.identity_summary ?? DEFAULT_IDENTITY_SUMMARY }
-  } catch (err) {
-    console.error('Identity classification call failed (non-fatal):', err)
+  } catch {
+    console.error('ANTHROPIC_IDENTITY_REQUEST_FAILED', { operation: 'identity_classification' })
     return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
   }
 }
@@ -157,6 +167,7 @@ async function callClaudeGoalFraming(
   activeGoal: { id: number; title: string; goal_type: string },
   runner_identity: RunnerIdentity,
   anthropicApiKey: string,
+  fetchImpl: typeof fetch,
 ): Promise<string> {
   const prompt = `Write one sentence (under 20 words) framing this running goal in identity terms for a "${runner_identity}". Never mention numbers or pace. Second person.
 
@@ -165,7 +176,7 @@ Runner identity: ${runner_identity}
 
 Respond with ONLY the sentence, no JSON, no quotes.`
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetchImpl('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -180,17 +191,24 @@ Respond with ONLY the sentence, no JSON, no quotes.`
   })
 
   if (!response.ok) {
-    const errorText = await response.text()
-    console.error('Anthropic goal-framing API error:', errorText)
-    throw new Error(`Anthropic API error: ${response.status}`)
+    console.error(ANTHROPIC_GOAL_FRAMING_FAILED, {
+      operation: 'goal_framing',
+      status: response.status,
+    })
+    throw new Error(ANTHROPIC_GOAL_FRAMING_FAILED)
   }
 
   const data = await response.json()
   return data.content[0].text.trim()
 }
 
-export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
-  const deps = resolveUserEndpointDependencies(overrides)
+export function createHandler(overrides: Partial<IdentityDependencies> = {}) {
+  const userDeps = resolveUserEndpointDependencies(overrides)
+  const deps: IdentityDependencies = {
+    ...userDeps,
+    fetch: overrides.fetch ?? globalThis.fetch,
+    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
+  }
 
   return async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -210,10 +228,10 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
     }
 
     const athleteId = context.athleteId
-    console.log('identity-profile request:', { athlete_id: athleteId, mode })
+    console.log('Identity profile request', { athleteId })
 
     const supabaseAdmin = deps.getAdmin()
-    const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
+    const anthropicApiKey = deps.getEnv('ANTHROPIC_API_KEY') ?? ''
 
     // Fetch activities from last 90 days
     const cutoff = new Date()
@@ -226,7 +244,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       .gte('activity_date', cutoff.toISOString())
 
     if (activitiesError) {
-      console.error('Error fetching activities:', activitiesError)
+      console.error('IDENTITY_ACTIVITY_LOOKUP_FAILED', { operation: 'activity_lookup' })
     }
 
     // Fetch existing core_memory from athlete_ai_profiles
@@ -237,7 +255,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       .maybeSingle()
 
     if (profileError) {
-      console.error('Error fetching athlete_ai_profiles:', profileError)
+      console.error('IDENTITY_PROFILE_LOOKUP_FAILED', { operation: 'identity_profile_lookup' })
     }
 
     const activityList = activities ?? []
@@ -249,6 +267,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       why_i_run,
       core_values,
       anthropicApiKey,
+      deps.fetch,
     )
 
     // Merge adlerian_profile into existing core_memory
@@ -275,7 +294,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       )
 
     if (upsertProfileError) {
-      console.error('Error upserting athlete_ai_profiles:', upsertProfileError)
+      console.error('IDENTITY_PROFILE_WRITE_FAILED', { operation: 'identity_profile_write' })
       throw new Error('Failed to save identity profile')
     }
 
@@ -293,7 +312,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       .upsert(milestoneRows, { onConflict: 'athlete_id,milestone_key', ignoreDuplicates: true })
 
     if (milestoneError) {
-      console.error('Error seeding milestones:', milestoneError)
+      console.error('IDENTITY_MILESTONE_SEED_FAILED', { operation: 'milestone_seed' })
     }
 
     // Check for active goal and generate goal_framing if present
@@ -305,14 +324,19 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       .maybeSingle()
 
     if (goalError) {
-      console.error('Error fetching running_goals:', goalError)
+      console.error('IDENTITY_GOAL_LOOKUP_FAILED', { operation: 'goal_lookup' })
     }
 
     if (activeGoal) {
       // Goal-framing is best-effort — a Claude failure here must not abort
       // the identity save. The identity write above has already succeeded.
       try {
-        const goal_framing = await callClaudeGoalFraming(activeGoal, runner_identity, anthropicApiKey)
+        const goal_framing = await callClaudeGoalFraming(
+          activeGoal,
+          runner_identity,
+          anthropicApiKey,
+          deps.fetch,
+        )
 
         const { error: goalUpdateError } = await supabaseAdmin
           .from('running_goals')
@@ -320,14 +344,14 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
           .eq('id', activeGoal.id)
 
         if (goalUpdateError) {
-          console.error('Error updating goal_framing:', goalUpdateError)
+          console.error('IDENTITY_GOAL_UPDATE_FAILED', { operation: 'goal_update' })
         }
-      } catch (err) {
-        console.error('Goal-framing call failed (non-fatal):', err)
+      } catch {
+        console.error('IDENTITY_GOAL_FRAMING_SKIPPED', { operation: 'goal_framing' })
       }
     }
 
-    console.log('identity-profile complete:', { athlete_id: athleteId, runner_identity })
+    console.log('Identity profile complete', { athleteId })
 
     return new Response(
       JSON.stringify({ runner_identity, identity_summary, why_i_run, core_values }),
@@ -337,7 +361,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
     const guardResponse = userGuardErrorResponse(error, corsHeaders)
     if (guardResponse) return guardResponse
 
-    console.error('Error in identity-profile function:', error)
+    console.error('IDENTITY_UNEXPECTED_ERROR', { operation: 'identity_request' })
     return new Response(
       JSON.stringify({ error: 'Internal error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

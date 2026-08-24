@@ -387,6 +387,59 @@ Deno.test("feedback-workout scopes activity_id lookup to the authenticated athle
   ]);
 });
 
+Deno.test("feedback-workout does not consume or log failed provider bodies", async () => {
+  const providerResponse = new Response("sensitive-feedback-body", { status: 500 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createFeedbackWorkoutHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "activities") {
+          return {
+            data: {
+              id: 123,
+              distance: 5000,
+              elapsed_time: 1800,
+              average_heartrate: 150,
+              sport_type: "Run",
+              name: "Private workout name",
+            },
+            error: null,
+          };
+        }
+        if (state.table === "athlete_ai_profiles") {
+          return { data: { core_memory: { adlerian_profile: {} } }, error: null };
+        }
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-provider-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/feedback-workout",
+      "POST",
+      { athlete_id: ATHLETE_A, activity_id: 123 },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 200);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-feedback-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-feedback-body"), "provider body must not reach logs");
+    assert(!logText.includes("Private workout name"), "user content must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
 Deno.test("check-milestones scopes activity_id lookup to the authenticated athlete", async () => {
   const operations: QueryState[] = [];
   const handler = createCheckMilestonesHandler({
@@ -606,6 +659,103 @@ Deno.test("journal generate-recent caps client work at four weeks", async () => 
   assertEquals(operations.filter((operation) => operation.table === "activities").length, 4);
 });
 
+Deno.test("journal does not consume or log failed provider bodies", async () => {
+  const providerResponse = new Response("sensitive-journal-body", { status: 502 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createJournalHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "activities") {
+          return {
+            data: [{
+              activity_date: "2026-08-24T10:00:00.000Z",
+              name: "Private journal workout",
+              distance: 5000,
+              moving_time: 1800,
+              average_heart_rate: 150,
+              elevation_gain: 20,
+            }],
+            error: null,
+          };
+        }
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-provider-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/journal/generate",
+      "POST",
+      { athlete_id: ATHLETE_A, week_start_date: "2026-08-24" },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-journal-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-journal-body"), "provider body must not reach logs");
+    assert(!logText.includes("Private journal workout"), "user content must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("identity-profile does not consume or log failed provider bodies", async () => {
+  const providerResponse = new Response("sensitive-identity-body", { status: 429 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createIdentityProfileHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "activities") return { data: [], error: null };
+        if (state.table === "athlete_ai_profiles" && state.selected === "core_memory") {
+          return { data: { core_memory: {} }, error: null };
+        }
+        if (state.table === "running_goals") return { data: null, error: null };
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-provider-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/identity-profile",
+      "POST",
+      {
+        athlete_id: ATHLETE_A,
+        why_i_run: "Private reason",
+        core_values: ["Private value"],
+      },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 200);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-identity-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-identity-body"), "provider body must not reach logs");
+    assert(!logText.includes("Private reason"), "user content must not reach logs");
+    assert(!logText.includes("Private value"), "user content must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
 Deno.test("user-races rejects missing and invalid tokens before service access", async () => {
   for (const authorization of [undefined, "Bearer invalid-token"]) {
     let adminCalls = 0;
@@ -669,6 +819,91 @@ Deno.test("backfill-splits does not consume or log failed Strava refresh bodies"
     assertEquals(providerResponse.bodyUsed, false);
     assert(!responseText.includes("sensitive-provider-body"), "provider body must not reach the response");
     assert(!logText.includes("sensitive-provider-body"), "provider body must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("backfill-splits sanitizes service database errors", async () => {
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createBackfillSplitsHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "activities") {
+          return {
+            data: null,
+            error: { message: "sensitive-database-error", details: "secret database details" },
+          };
+        }
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-client-credential",
+      fetch: async () => {
+        throw new Error("provider fetch must not run");
+      },
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/backfill-splits",
+      "POST",
+      { athlete_id: ATHLETE_A, limit: 1 },
+      "Bearer valid-token",
+    ));
+    const payload = await response.json();
+    const responseText = JSON.stringify(payload);
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(payload, {
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "Internal server error",
+      },
+    });
+    assert(!responseText.includes("sensitive-database-error"), "database error must not reach the response");
+    assert(!responseText.includes("secret database details"), "database details must not reach the response");
+    assert(!logText.includes("sensitive-database-error"), "database error must not reach logs");
+    assert(!logText.includes("secret database details"), "database details must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("user-races does not consume or log failed provider bodies", async () => {
+  const providerResponse = new Response("sensitive-runsignup-body", { status: 400 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createUserRacesHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([]),
+      getEnv: () => "test-provider-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/user-races?action=token",
+      "POST",
+      { code: "test-code", redirect_uri: "runaway://oauth" },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-runsignup-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-runsignup-body"), "provider body must not reach logs");
   } finally {
     console.error = originalConsoleError;
   }

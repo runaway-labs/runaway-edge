@@ -9,8 +9,18 @@ import {
   type UserEndpointDependencies,
 } from '../_shared/user-endpoint.ts'
 
-export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
-  const deps = resolveUserEndpointDependencies(overrides)
+interface JournalDependencies extends UserEndpointDependencies {
+  fetch: typeof fetch
+  getEnv: (name: string) => string | undefined
+}
+
+export function createHandler(overrides: Partial<JournalDependencies> = {}) {
+  const userDeps = resolveUserEndpointDependencies(overrides)
+  const deps: JournalDependencies = {
+    ...userDeps,
+    fetch: overrides.fetch ?? globalThis.fetch,
+    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
+  }
 
   return async (req: Request) => {
   // Handle CORS preflight requests
@@ -55,7 +65,7 @@ if (import.meta.main) {
   Deno.serve(createHandler())
 }
 
-async function handleGenerate(req: Request, deps: UserEndpointDependencies) {
+async function handleGenerate(req: Request, deps: JournalDependencies) {
   try {
     const { athlete_id, week_start_date } = await req.json()
     const requestedAthleteId = parseLegacyAthleteId(athlete_id)
@@ -107,7 +117,8 @@ async function handleGenerate(req: Request, deps: UserEndpointDependencies) {
       .order('activity_date', { ascending: true })
 
     if (activitiesError) {
-      throw new Error(`Error fetching activities: ${activitiesError.message}`)
+      console.error('JOURNAL_ACTIVITY_LOOKUP_FAILED', { operation: 'activity_lookup' })
+      throw new Error('JOURNAL_ACTIVITY_LOOKUP_FAILED')
     }
 
     if (!activities || activities.length === 0) {
@@ -154,8 +165,8 @@ Total: ${activities.length} activities, ${totalDistance.toFixed(1)}km, ${Math.ro
 `
 
     // Call Anthropic API to generate journal
-    const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
-    const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    const anthropicApiKey = deps.getEnv('ANTHROPIC_API_KEY') ?? ''
+    const anthropicResponse = await deps.fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -182,9 +193,11 @@ Be encouraging but honest. Focus on patterns, consistency, and progression.`,
     })
 
     if (!anthropicResponse.ok) {
-      const errorData = await anthropicResponse.text()
-      console.error('Anthropic API error:', errorData)
-      throw new Error(`Anthropic API error: ${anthropicResponse.status}`)
+      console.error('ANTHROPIC_JOURNAL_FAILED', {
+        operation: 'journal_generation',
+        status: anthropicResponse.status,
+      })
+      throw new Error('ANTHROPIC_JOURNAL_FAILED')
     }
 
     const anthropicData = await anthropicResponse.json()
@@ -210,7 +223,7 @@ Be encouraging but honest. Focus on patterns, consistency, and progression.`,
       .single()
 
     if (insertError) {
-      console.error('Error storing journal:', insertError)
+      console.error('JOURNAL_WRITE_FAILED', { operation: 'journal_write' })
       // Continue even if storage fails
     }
 
@@ -230,7 +243,7 @@ Be encouraging but honest. Focus on patterns, consistency, and progression.`,
     const guardResponse = userGuardErrorResponse(error, corsHeaders)
     if (guardResponse) return guardResponse
 
-    console.error('Error generating journal:', error)
+    console.error('JOURNAL_GENERATE_UNEXPECTED_ERROR', { operation: 'journal_generate' })
     return new Response(
       JSON.stringify({
         error: {
@@ -246,7 +259,7 @@ Be encouraging but honest. Focus on patterns, consistency, and progression.`,
   }
 }
 
-async function handleGenerateRecent(req: Request, deps: UserEndpointDependencies) {
+async function handleGenerateRecent(req: Request, deps: JournalDependencies) {
   try {
     const { athlete_id, weeks = 4 } = await req.json()
     const requestedAthleteId = parseLegacyAthleteId(athlete_id)
@@ -303,9 +316,11 @@ async function handleGenerateRecent(req: Request, deps: UserEndpointDependencies
         if (data.success && data.journal) {
           generatedEntries.push(data.journal)
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error'
-        console.warn('Failed to generate journal for week:', weekStart.toISOString(), message)
+      } catch {
+        console.warn('JOURNAL_RECENT_WEEK_FAILED', {
+          operation: 'journal_generate_recent',
+          weekStart: weekStart.toISOString(),
+        })
       }
     }
 
@@ -324,7 +339,7 @@ async function handleGenerateRecent(req: Request, deps: UserEndpointDependencies
     const guardResponse = userGuardErrorResponse(error, corsHeaders)
     if (guardResponse) return guardResponse
 
-    console.error('Error generating recent journals:', error)
+    console.error('JOURNAL_RECENT_UNEXPECTED_ERROR', { operation: 'journal_generate_recent' })
     return new Response(
       JSON.stringify({
         error: {
@@ -344,7 +359,7 @@ async function handleGetEntries(
   req: Request,
   athleteIdStr: string | null,
   limitStr: string | null,
-  deps: UserEndpointDependencies,
+  deps: JournalDependencies,
 ) {
   try {
     const requestedAthleteId = parseLegacyAthleteId(athleteIdStr)
@@ -374,7 +389,8 @@ async function handleGetEntries(
       .limit(limit)
 
     if (error) {
-      throw new Error(`Error fetching journals: ${error.message}`)
+      console.error('JOURNAL_ENTRY_LOOKUP_FAILED', { operation: 'journal_entry_lookup' })
+      throw new Error('JOURNAL_ENTRY_LOOKUP_FAILED')
     }
 
     return new Response(
@@ -392,7 +408,7 @@ async function handleGetEntries(
     const guardResponse = userGuardErrorResponse(error, corsHeaders)
     if (guardResponse) return guardResponse
 
-    console.error('Error fetching journal entries:', error)
+    console.error('JOURNAL_GET_UNEXPECTED_ERROR', { operation: 'journal_get' })
     return new Response(
       JSON.stringify({
         error: {

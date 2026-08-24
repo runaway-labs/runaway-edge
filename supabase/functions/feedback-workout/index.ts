@@ -9,6 +9,11 @@ import {
   type UserEndpointDependencies,
 } from '../_shared/user-endpoint.ts'
 
+interface FeedbackDependencies extends UserEndpointDependencies {
+  fetch: typeof fetch
+  getEnv: (name: string) => string | undefined
+}
+
 function deriveEffortLabel(distance: number | null, elapsedTime: number | null): string {
   if (!distance || !elapsedTime || distance === 0 || elapsedTime === 0) {
     return 'Easy'
@@ -23,8 +28,13 @@ function deriveEffortLabel(distance: number | null, elapsedTime: number | null):
   return 'Easy'
 }
 
-export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
-  const deps = resolveUserEndpointDependencies(overrides)
+export function createHandler(overrides: Partial<FeedbackDependencies> = {}) {
+  const userDeps = resolveUserEndpointDependencies(overrides)
+  const deps: FeedbackDependencies = {
+    ...userDeps,
+    fetch: overrides.fetch ?? globalThis.fetch,
+    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
+  }
 
   return async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -63,7 +73,11 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       .single()
 
     if (activityError || !activity) {
-      console.error('Activity not found:', activityError)
+      console.error('FEEDBACK_ACTIVITY_LOOKUP_FAILED', {
+        operation: 'activity_lookup',
+        activityId: activity_id,
+        athleteId,
+      })
       return new Response(
         JSON.stringify({
           error: {
@@ -117,8 +131,8 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
     let feedback = `You showed up today — that's what a ${runnerIdentity} does.`
 
     try {
-      const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
-      const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
+      const anthropicApiKey = deps.getEnv('ANTHROPIC_API_KEY') ?? ''
+      const anthropicResponse = await deps.fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -141,11 +155,13 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
         const anthropicData = await anthropicResponse.json()
         feedback = anthropicData.content[0].text.trim()
       } else {
-        const errorText = await anthropicResponse.text()
-        console.error('Anthropic API error:', anthropicResponse.status, errorText)
+        console.error('ANTHROPIC_FEEDBACK_FAILED', {
+          operation: 'feedback_generation',
+          status: anthropicResponse.status,
+        })
       }
-    } catch (claudeError) {
-      console.error('Claude call failed, using default feedback:', claudeError)
+    } catch {
+      console.error('ANTHROPIC_FEEDBACK_REQUEST_FAILED', { operation: 'feedback_generation' })
     }
 
     // Insert insight row — one per call, duplicates are acceptable
@@ -163,7 +179,7 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
       })
 
     if (insertError) {
-      console.error('Failed to insert activity insight:', insertError)
+      console.error('FEEDBACK_INSIGHT_WRITE_FAILED', { operation: 'insight_write' })
     }
 
     return new Response(
@@ -177,7 +193,7 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
     const guardResponse = userGuardErrorResponse(error, corsHeaders)
     if (guardResponse) return guardResponse
 
-    console.error('Error in feedback-workout function:', error)
+    console.error('FEEDBACK_UNEXPECTED_ERROR', { operation: 'feedback_request' })
     return new Response(
       JSON.stringify({
         error: {

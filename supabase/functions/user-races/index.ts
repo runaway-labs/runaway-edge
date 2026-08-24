@@ -15,6 +15,9 @@ import {
 const RUNSIGNUP_API_URL = "https://runsignup.com/rest/user/registered-races";
 const RUNSIGNUP_TOKEN_URL = "https://api.runsignup.com/rest/v2/auth/auth-code-redemption.json";
 const RUNSIGNUP_REFRESH_URL = "https://api.runsignup.com/rest/v2/auth/refresh-token.json";
+const RUNSIGNUP_TOKEN_EXCHANGE_FAILED = "RUNSIGNUP_TOKEN_EXCHANGE_FAILED";
+const RUNSIGNUP_TOKEN_REFRESH_FAILED = "RUNSIGNUP_TOKEN_REFRESH_FAILED";
+const RUNSIGNUP_RACE_FETCH_FAILED = "RUNSIGNUP_RACE_FETCH_FAILED";
 
 // Base64-encode the client secret as required by RunSignUp token endpoint
 function encodeSecret(secret: string): string {
@@ -43,9 +46,21 @@ async function exchangeCode(
     body,
   });
 
+  if (!res.ok) {
+    console.error(RUNSIGNUP_TOKEN_EXCHANGE_FAILED, {
+      operation: "token_exchange",
+      status: res.status,
+    });
+    throw new Error(RUNSIGNUP_TOKEN_EXCHANGE_FAILED);
+  }
+
   const data = await res.json();
-  if (!res.ok || data.error) {
-    throw new Error(data.error_description || data.error || `Token exchange failed (${res.status})`);
+  if (data.error) {
+    console.error(RUNSIGNUP_TOKEN_EXCHANGE_FAILED, {
+      operation: "token_exchange",
+      status: res.status,
+    });
+    throw new Error(RUNSIGNUP_TOKEN_EXCHANGE_FAILED);
   }
 
   return data;
@@ -71,9 +86,21 @@ async function refreshAccessToken(
     body,
   });
 
+  if (!res.ok) {
+    console.error(RUNSIGNUP_TOKEN_REFRESH_FAILED, {
+      operation: "token_refresh",
+      status: res.status,
+    });
+    throw new Error(RUNSIGNUP_TOKEN_REFRESH_FAILED);
+  }
+
   const data = await res.json();
-  if (!res.ok || data.error) {
-    throw new Error(data.error_description || data.error || `Token refresh failed (${res.status})`);
+  if (data.error) {
+    console.error(RUNSIGNUP_TOKEN_REFRESH_FAILED, {
+      operation: "token_refresh",
+      status: res.status,
+    });
+    throw new Error(RUNSIGNUP_TOKEN_REFRESH_FAILED);
   }
 
   return data;
@@ -86,12 +113,20 @@ async function fetchRegisteredRaces(accessToken: string, fetchImpl: typeof fetch
   });
 
   if (!res.ok) {
-    throw new Error(`RunSignUp API error: ${res.status} ${res.statusText}`);
+    console.error(RUNSIGNUP_RACE_FETCH_FAILED, {
+      operation: "registered_races_fetch",
+      status: res.status,
+    });
+    throw new Error(RUNSIGNUP_RACE_FETCH_FAILED);
   }
 
   const data = await res.json();
   if (data.error) {
-    throw new Error(data.error.error_msg || JSON.stringify(data.error));
+    console.error(RUNSIGNUP_RACE_FETCH_FAILED, {
+      operation: "registered_races_fetch",
+      status: res.status,
+    });
+    throw new Error(RUNSIGNUP_RACE_FETCH_FAILED);
   }
 
   return data;
@@ -171,7 +206,8 @@ export function createHandler(overrides: Partial<UserRacesDependencies> = {}) {
         .eq("id", context.athleteId);
 
       if (updateError) {
-        return errorResponse(`Failed to store tokens: ${updateError.message}`, 500);
+        console.error("RUNSIGNUP_CREDENTIAL_WRITE_FAILED", { operation: "credential_write" });
+        return errorResponse("Internal server error", 500);
       }
 
       return jsonResponse({ success: true, connected: true });
@@ -209,7 +245,7 @@ export function createHandler(overrides: Partial<UserRacesDependencies> = {}) {
 
         accessToken = refreshed.access_token;
 
-        await supabase
+        const { error: refreshWriteError } = await supabase
           .from("athletes")
           .update({
             runsignup_access_token: refreshed.access_token,
@@ -219,6 +255,13 @@ export function createHandler(overrides: Partial<UserRacesDependencies> = {}) {
             ).toISOString(),
           })
           .eq("id", context.athleteId);
+
+        if (refreshWriteError) {
+          console.error("RUNSIGNUP_CREDENTIAL_REFRESH_WRITE_FAILED", {
+            operation: "credential_refresh_write",
+          });
+          return errorResponse("Internal server error", 500);
+        }
       } catch {
         // Refresh failed — user needs to re-authorize
         return jsonResponse({
@@ -236,7 +279,7 @@ export function createHandler(overrides: Partial<UserRacesDependencies> = {}) {
     const guardResponse = userGuardErrorResponse(error, corsHeaders);
     if (guardResponse) return guardResponse;
 
-    console.error("Error in user-races:", error);
+    console.error("RUNSIGNUP_UNEXPECTED_ERROR", { operation: "user_races_request" });
     return errorResponse("Internal server error", 500);
   }
   };

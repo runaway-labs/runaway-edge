@@ -170,7 +170,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       .eq('earned', false)
 
     if (milestoneError) {
-      console.error('Error fetching milestones:', milestoneError)
+      console.error('MILESTONE_LOOKUP_FAILED', { operation: 'milestone_lookup' })
       return new Response(
         JSON.stringify({ error: { code: 'DB_ERROR', message: 'Failed to fetch milestones' } }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -196,7 +196,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       .order('activity_date', { ascending: true })
 
     if (activitiesError) {
-      console.error('Error fetching activities:', activitiesError)
+      console.error('MILESTONE_ACTIVITY_LOOKUP_FAILED', { operation: 'activity_lookup' })
       return new Response(
         JSON.stringify({ error: { code: 'DB_ERROR', message: 'Failed to fetch activities' } }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -216,7 +216,10 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
           .eq('milestone_key', key)
           .eq('earned', false)
         if (updateError) {
-          console.error(`Error marking milestone ${key}:`, updateError)
+          console.error('MILESTONE_UPDATE_FAILED', {
+            operation: 'milestone_update',
+            milestoneKey: key,
+          })
         } else {
           confirmedEarned.push(key)
         }
@@ -233,7 +236,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
     const guardResponse = userGuardErrorResponse(error, corsHeaders)
     if (guardResponse) return guardResponse
 
-    console.error('Error in check-milestones:', error)
+    console.error('MILESTONE_UNEXPECTED_ERROR', { operation: 'milestone_request' })
     return new Response(
       JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

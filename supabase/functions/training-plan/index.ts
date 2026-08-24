@@ -80,8 +80,8 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
         )
       }
 
-      console.error('Error fetching plan:', error)
-      throw error
+      console.error('TRAINING_PLAN_LOOKUP_FAILED', { operation: 'training_plan_lookup' })
+      throw new Error('TRAINING_PLAN_LOOKUP_FAILED')
     }
 
     console.log('Plan found:', {
@@ -103,7 +103,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
     const guardResponse = userGuardErrorResponse(error, corsHeaders)
     if (guardResponse) return guardResponse
 
-    console.error('Error in training-plan:', error)
+    console.error('TRAINING_PLAN_UNEXPECTED_ERROR', { operation: 'training_plan_request' })
     return new Response(
       JSON.stringify({
         success: false,

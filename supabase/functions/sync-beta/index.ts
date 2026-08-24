@@ -128,7 +128,7 @@ export function createHandler(overrides: Partial<SyncDependencies> = {}) {
       .single()
 
     if (athleteError || !athlete) {
-      console.error('Athlete not found:', athleteId)
+      console.error('SYNC_ATHLETE_LOOKUP_FAILED', { operation: 'athlete_lookup', athleteId })
       return new Response(
         JSON.stringify({ error: { code: 'ATHLETE_NOT_FOUND', message: `Athlete ${athleteId} not found` } }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -169,7 +169,7 @@ export function createHandler(overrides: Partial<SyncDependencies> = {}) {
       .select('id, name')
 
     if (typesError) {
-      console.error('Error fetching activity types:', typesError)
+      console.error('SYNC_ACTIVITY_TYPES_LOOKUP_FAILED', { operation: 'activity_types_lookup' })
     }
 
     // Build activity type lookup map (Strava type name -> database id)
@@ -181,7 +181,7 @@ export function createHandler(overrides: Partial<SyncDependencies> = {}) {
         activityTypeMap[at.name.toLowerCase()] = at.id
       }
     }
-    console.log('Activity type map:', activityTypeMap)
+    console.log('Activity types loaded', { count: activityTypes?.length ?? 0 })
 
     // Fetch activities from Strava
     console.log(`Fetching up to ${max_activities} activities from Strava...`)
@@ -213,12 +213,9 @@ export function createHandler(overrides: Partial<SyncDependencies> = {}) {
       try {
         const activityRecord = mapStravaActivity(activity, athleteId, activityTypeMap)
 
-        console.log(`Upserting activity ${activity.id}: ${activity.name}`)
-        console.log(`  - athlete_id: ${activityRecord.athlete_id}`)
-        console.log(`  - distance: ${activityRecord.distance}`)
-        console.log(`  - activity_date: ${activityRecord.activity_date}`)
+        console.log('Upserting activity', { activityId: activity.id, athleteId })
 
-        const { data: upsertData, error: upsertError, status, statusText } = await supabaseAdmin
+        const { error: upsertError, status } = await supabaseAdmin
           .from('activities')
           .upsert(activityRecord, {
             onConflict: 'id',
@@ -226,31 +223,39 @@ export function createHandler(overrides: Partial<SyncDependencies> = {}) {
           })
           .select('id, name')
 
-        console.log(`  - Response status: ${status} ${statusText}`)
-
         if (upsertError) {
-          console.error(`  - ERROR upserting activity ${activity.id}:`, JSON.stringify(upsertError))
+          console.error('SYNC_ACTIVITY_UPSERT_FAILED', {
+            operation: 'activity_upsert',
+            activityId: activity.id,
+            status,
+          })
           errorCount++
         } else {
-          console.log(`  - SUCCESS: upserted data:`, JSON.stringify(upsertData))
+          console.log('Activity upserted', { activityId: activity.id, status })
           syncedCount++
         }
 
         // Verify the record exists
-        const { data: verifyData, error: verifyError } = await supabaseAdmin
+        const { error: verifyError } = await supabaseAdmin
           .from('activities')
           .select('id, name')
           .eq('id', activity.id)
           .single()
 
         if (verifyError) {
-          console.log(`  - VERIFY FAILED: Activity ${activity.id} NOT in database:`, JSON.stringify(verifyError))
+          console.error('SYNC_ACTIVITY_VERIFY_FAILED', {
+            operation: 'activity_verify',
+            activityId: activity.id,
+          })
         } else {
-          console.log(`  - VERIFY OK: Activity ${activity.id} exists in database:`, JSON.stringify(verifyData))
+          console.log('Activity verified', { activityId: activity.id })
         }
 
-      } catch (err) {
-        console.error(`Error processing activity ${activity.id}:`, err)
+      } catch {
+        console.error('SYNC_ACTIVITY_PROCESSING_FAILED', {
+          operation: 'activity_processing',
+          activityId: activity.id,
+        })
         errorCount++
       }
     }
@@ -271,7 +276,7 @@ export function createHandler(overrides: Partial<SyncDependencies> = {}) {
     const guardResponse = userGuardErrorResponse(error, corsHeaders)
     if (guardResponse) return guardResponse
 
-    console.error('Error in sync-beta:', error)
+    console.error('SYNC_UNEXPECTED_ERROR', { operation: 'sync_request' })
     return new Response(
       JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -323,8 +328,8 @@ async function refreshStravaToken(
       .eq('id', athleteId)
 
     return data.access_token
-  } catch (err) {
-    console.error('Error refreshing token:', err)
+  } catch {
+    console.error('STRAVA_TOKEN_REFRESH_EXCEPTION', { operation: 'token_refresh' })
     return null
   }
 }
@@ -396,8 +401,6 @@ function mapStravaActivity(activity: StravaActivity, athleteId: number, activity
     activityTypeMap[activity.type?.toLowerCase()] ||
     activityTypeMap['Run'] ||  // Default to Run if nothing matches
     1  // Fallback to 1
-
-  console.log(`  - Mapping type: sport_type="${activity.sport_type}", type="${activity.type}" -> activity_type_id=${activityTypeId}`)
 
   return {
     id: activity.id,  // Using Strava ID as primary key

@@ -29,7 +29,7 @@ async function refreshAccessToken(
   const stravaClientSecret = getEnv('STRAVA_CLIENT_SECRET')
 
   if (!stravaClientId || !stravaClientSecret) {
-    throw new Error('Missing Strava API credentials')
+    throw new Error('STRAVA_CREDENTIALS_MISSING')
   }
 
   const { data: athlete, error } = await supabase
@@ -39,7 +39,7 @@ async function refreshAccessToken(
     .single()
 
   if (error || !athlete?.refresh_token) {
-    throw new Error(`No refresh token for athlete ${athleteId}`)
+    throw new Error('STRAVA_REFRESH_TOKEN_MISSING')
   }
 
   const res = await fetchImpl('https://www.strava.com/oauth/token', {
@@ -126,7 +126,11 @@ export function createHandler(overrides: Partial<BackfillDependencies> = {}) {
     .limit(limit)
 
   if (fetchError) {
-    return new Response(JSON.stringify({ error: fetchError.message }), { status: 500 })
+    console.error('BACKFILL_ACTIVITY_LOOKUP_FAILED', { operation: 'activity_lookup' })
+    return new Response(
+      JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
   }
 
   if (!activities || activities.length === 0) {
@@ -154,12 +158,19 @@ export function createHandler(overrides: Partial<BackfillDependencies> = {}) {
       const res = await deps.fetch(`${STRAVA_API_BASE}/activities/${activity.id}`, { headers })
 
       if (res.status === 429) {
-        console.warn('Strava rate limit hit — stopping early')
+        console.warn('STRAVA_ACTIVITY_RATE_LIMITED', {
+          operation: 'activity_fetch',
+          status: res.status,
+        })
         break
       }
 
       if (!res.ok) {
-        console.error(`Failed to fetch activity ${activity.id}: ${res.status}`)
+        console.error('STRAVA_ACTIVITY_FETCH_FAILED', {
+          operation: 'activity_fetch',
+          activityId: activity.id,
+          status: res.status,
+        })
         failed++
         continue
       }
@@ -175,13 +186,19 @@ export function createHandler(overrides: Partial<BackfillDependencies> = {}) {
         .eq('athlete_id', athleteId)
 
       if (updateError) {
-        console.error(`Failed to update splits for ${activity.id}:`, updateError)
+        console.error('BACKFILL_ACTIVITY_UPDATE_FAILED', {
+          operation: 'activity_update',
+          activityId: activity.id,
+        })
         failed++
       } else {
         updated++
       }
-    } catch (err) {
-      console.error(`Error processing activity ${activity.id}:`, err)
+    } catch {
+      console.error('BACKFILL_ACTIVITY_PROCESSING_FAILED', {
+        operation: 'activity_processing',
+        activityId: activity.id,
+      })
       failed++
     }
   }
@@ -194,7 +211,7 @@ export function createHandler(overrides: Partial<BackfillDependencies> = {}) {
       const guardResponse = userGuardErrorResponse(error, corsHeaders)
       if (guardResponse) return guardResponse
 
-      console.error('Error in backfill-splits:', error)
+      console.error('BACKFILL_UNEXPECTED_ERROR', { operation: 'backfill_request' })
       return new Response(
         JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

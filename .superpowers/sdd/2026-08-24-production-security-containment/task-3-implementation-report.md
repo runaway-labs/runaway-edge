@@ -72,6 +72,20 @@ mutation was performed.
   cannot bypass the assertion.
 - Added focused sync tests proving failed refresh and activity response bodies
   remain unread and cannot reach handler responses or captured logs.
+- Applied the same fixed-code sanitation policy across all eight migrated
+  handlers. Provider failures retain only fixed codes and HTTP status; service
+  database failures retain fixed operation codes; raw exception objects,
+  parsed rows, provider payloads, activity names, identity content, and token
+  values are not logged or thrown.
+- Sanitized `feedback-workout`, `journal`, `identity-profile`, and
+  `user-races` provider paths with injectable fetch/environment boundaries
+  and non-consuming failed-response handling.
+- Normalized `backfill-splits` activity-query failures to
+  `{ error: { code: "INTERNAL_ERROR", message: "Internal server error" } }`
+  and fixed-code logging.
+- Added representative sentinel tests for feedback, journal, identity,
+  user-races, sync, backfill provider failures, user content, and service-role
+  database errors.
 
 ## Tests and static checks
 
@@ -79,7 +93,7 @@ Required endpoint suite:
 
 ```text
 $ npx --yes deno test supabase/functions/_tests/user-endpoint-auth.test.ts
-ok | 48 passed | 0 failed (43ms)
+ok | 53 passed | 0 failed (69ms)
 ```
 
 The table-driven cases cover missing token, invalid token, athlete substitution,
@@ -93,7 +107,7 @@ Existing shared guard regression suite:
 
 ```text
 $ npx --yes deno test supabase/functions/_shared/require-user.test.ts
-ok | 9 passed | 0 failed (26ms)
+ok | 9 passed | 0 failed (19ms)
 ```
 
 Static type check:
@@ -109,6 +123,19 @@ $ npx --yes deno check supabase/functions/_shared/user-endpoint.ts \
     supabase/functions/journal/index.ts \
     supabase/functions/user-races/index.ts
 exit 0; all nine modules checked
+```
+
+Static sanitation scan over all eight migrated handlers:
+
+```text
+$ rg -n 'response\.text\(|await [^;]*\.text\(|error(Text|Data)|error\.message|throw (error|err)\b' <Task 3 handlers>
+no matches (rg exit 1, expected)
+
+$ rg -n 'console\.(log|warn|error).*\b(activity\.name|activityTypeMap|upsertData|verifyData|rawText|runner_identity|why_i_run|core_values|access_token|refresh_token|authorization|anthropicApiKey)\b' <Task 3 handlers>
+no matches (rg exit 1, expected)
+
+$ rg -n 'console\.(error|warn)\([^\n]*,\s*(error|err|[a-zA-Z]+Error)\b|JSON\.stringify\((upsertError|verifyError|[a-zA-Z]+Error)\)' <Task 3 handlers>
+no matches (rg exit 1, expected)
 ```
 
 Scoped whitespace check:
