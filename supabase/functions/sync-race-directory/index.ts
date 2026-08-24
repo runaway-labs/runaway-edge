@@ -9,10 +9,7 @@ import type {
   RaceDirectoryEvent,
   SyncRaceDirectoryResponse,
 } from "../_shared/types.ts";
-import {
-  internalAuthErrorResponse,
-  requireInternal,
-} from "../_shared/require-internal.ts";
+import { createSyncRaceDirectoryHandler } from "./handler.ts";
 
 const RUNSIGNUP_BASE_URL = "https://runsignup.com/rest/races";
 const RESULTS_PER_PAGE = 100;
@@ -124,20 +121,7 @@ async function upsertBatch(
   return data?.length || 0;
 }
 
-Deno.serve(async (req: Request) => {
-  const corsResponse = handleCors(req);
-  if (corsResponse) return corsResponse;
-
-  if (req.method !== "POST") {
-    return errorResponse("Method not allowed", 405);
-  }
-
-  try {
-    requireInternal(req);
-  } catch (error) {
-    return internalAuthErrorResponse(error, corsHeaders);
-  }
-
+export const handler = createSyncRaceDirectoryHandler(async (_req: Request) => {
   try {
     const supabase = getSupabaseAdmin();
 
@@ -266,4 +250,8 @@ Deno.serve(async (req: Request) => {
       500
     );
   }
-});
+}, { headers: corsHeaders });
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

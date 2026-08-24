@@ -3,11 +3,15 @@ alter table public.alert_deliveries
 
 alter table public.alert_deliveries
   add constraint alert_deliveries_status_check
-  check (status in ('pending', 'processing', 'sent', 'delivered', 'retryable', 'failed'));
+  check (status in (
+    'pending', 'processing', 'submitting', 'sent', 'delivered', 'retryable', 'failed'
+  ));
 
 alter table public.alert_deliveries
   add column if not exists attempt_count integer not null default 0,
   add column if not exists processing_started_at timestamptz,
+  add column if not exists claim_generation bigint not null default 0,
+  add column if not exists lease_expires_at timestamptz,
   add column if not exists idempotency_key text
     generated always as (id::text || ':' || channel) stored;
 
@@ -28,7 +32,53 @@ begin
 end
 $$;
 
-create or replace function private.claim_pending_deliveries(batch_size integer)
+create index if not exists alert_deliveries_claimable_idx
+  on public.alert_deliveries (status, lease_expires_at, created_at, id)
+  where status in ('pending', 'retryable', 'processing');
+
+create or replace function private.require_internal_job_secret()
+returns text
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  configured_secret text;
+  distinct_digits integer;
+begin
+  select decrypted_secret
+  into configured_secret
+  from vault.decrypted_secrets
+  where name = 'internal_job_secret'
+  limit 1;
+
+  if configured_secret is not null then
+    select count(distinct digit)
+    into distinct_digits
+    from regexp_split_to_table(configured_secret, '') as digit;
+  end if;
+
+  if configured_secret is null
+    or configured_secret !~ '^[0-9a-f]{64}$'
+    or coalesce(distinct_digits, 0) < 8
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'internal job secret is not configured';
+  end if;
+
+  return configured_secret;
+end;
+$$;
+
+revoke all on function private.require_internal_job_secret()
+  from public, anon, authenticated, service_role;
+
+drop function if exists public.claim_pending_deliveries(integer);
+drop function if exists private.claim_pending_deliveries(integer);
+
+create function private.claim_pending_deliveries(batch_size integer)
 returns table (
   id uuid,
   alert_id uuid,
@@ -38,7 +88,9 @@ returns table (
   status text,
   idempotency_key text,
   attempt_count integer,
-  processing_started_at timestamptz
+  processing_started_at timestamptz,
+  claim_generation bigint,
+  lease_expires_at timestamptz
 )
 language sql
 volatile
@@ -49,6 +101,10 @@ as $$
     select delivery.id
     from public.alert_deliveries as delivery
     where delivery.status in ('pending', 'retryable')
+      or (
+        delivery.status = 'processing'
+        and delivery.lease_expires_at <= clock_timestamp()
+      )
     order by delivery.created_at, delivery.id
     limit greatest(1, least(coalesce(batch_size, 50), 100))
     for update skip locked
@@ -56,11 +112,19 @@ as $$
   update public.alert_deliveries as delivery
   set status = 'processing',
       attempt_count = delivery.attempt_count + 1,
-      processing_started_at = now(),
-      updated_at = now()
+      processing_started_at = clock_timestamp(),
+      claim_generation = delivery.claim_generation + 1,
+      lease_expires_at = clock_timestamp() + interval '5 minutes',
+      updated_at = clock_timestamp()
   from candidates
   where delivery.id = candidates.id
-    and delivery.status in ('pending', 'retryable')
+    and (
+      delivery.status in ('pending', 'retryable')
+      or (
+        delivery.status = 'processing'
+        and delivery.lease_expires_at <= clock_timestamp()
+      )
+    )
   returning
     delivery.id,
     delivery.alert_id,
@@ -70,10 +134,13 @@ as $$
     delivery.status,
     delivery.idempotency_key,
     delivery.attempt_count,
-    delivery.processing_started_at;
+    delivery.processing_started_at,
+    delivery.claim_generation,
+    delivery.lease_expires_at;
 $$;
 
-revoke all on function private.claim_pending_deliveries(integer) from public, anon, authenticated;
+revoke all on function private.claim_pending_deliveries(integer)
+  from public, anon, authenticated;
 grant usage on schema private to service_role;
 grant execute on function private.claim_pending_deliveries(integer) to service_role;
 
@@ -87,7 +154,9 @@ returns table (
   status text,
   idempotency_key text,
   attempt_count integer,
-  processing_started_at timestamptz
+  processing_started_at timestamptz,
+  claim_generation bigint,
+  lease_expires_at timestamptz
 )
 language sql
 volatile
@@ -97,8 +166,135 @@ as $$
   select * from private.claim_pending_deliveries(batch_size);
 $$;
 
-revoke all on function public.claim_pending_deliveries(integer) from public, anon, authenticated;
+revoke all on function public.claim_pending_deliveries(integer)
+  from public, anon, authenticated;
 grant execute on function public.claim_pending_deliveries(integer) to service_role;
+
+create or replace function private.begin_delivery_submission(
+  delivery_id uuid,
+  claim_generation bigint
+)
+returns boolean
+language sql
+volatile
+security invoker
+set search_path = ''
+as $$
+  with transitioned as (
+    update public.alert_deliveries as delivery
+    set status = 'submitting',
+        updated_at = clock_timestamp()
+    where delivery.id = $1
+      and delivery.status = 'processing'
+      and delivery.claim_generation = $2
+      and delivery.lease_expires_at > clock_timestamp()
+    returning 1
+  )
+  select exists(select 1 from transitioned);
+$$;
+
+revoke all on function private.begin_delivery_submission(uuid, bigint)
+  from public, anon, authenticated;
+grant execute on function private.begin_delivery_submission(uuid, bigint)
+  to service_role;
+
+create or replace function public.begin_delivery_submission(
+  delivery_id uuid,
+  claim_generation bigint
+)
+returns boolean
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  select private.begin_delivery_submission($1, $2);
+$$;
+
+revoke all on function public.begin_delivery_submission(uuid, bigint)
+  from public, anon, authenticated;
+grant execute on function public.begin_delivery_submission(uuid, bigint)
+  to service_role;
+
+create or replace function private.finalize_delivery(
+  delivery_id uuid,
+  claim_generation bigint,
+  final_status text,
+  provider_message_id text,
+  error_message text,
+  sent_at timestamptz
+)
+returns boolean
+language plpgsql
+volatile
+security invoker
+set search_path = ''
+as $$
+declare
+  finalized boolean;
+begin
+  if $3 not in ('sent', 'retryable', 'failed') then
+    raise exception using
+      errcode = '22023',
+      message = 'invalid delivery final status';
+  end if;
+
+  with transitioned as (
+    update public.alert_deliveries as delivery
+    set status = $3,
+        provider_message_id = $4,
+        error_message = $5,
+        sent_at = case when $3 = 'sent' then coalesce($6, clock_timestamp()) else null end,
+        processing_started_at = null,
+        lease_expires_at = null,
+        updated_at = clock_timestamp()
+    where delivery.id = $1
+      and delivery.status in ('processing', 'submitting')
+      and delivery.claim_generation = $2
+      and delivery.lease_expires_at > clock_timestamp()
+    returning true
+  )
+  select coalesce(bool_or(true), false)
+  into finalized
+  from transitioned;
+
+  return finalized;
+end;
+$$;
+
+revoke all on function private.finalize_delivery(uuid, bigint, text, text, text, timestamptz)
+  from public, anon, authenticated;
+grant execute on function private.finalize_delivery(uuid, bigint, text, text, text, timestamptz)
+  to service_role;
+
+create or replace function public.finalize_delivery(
+  delivery_id uuid,
+  claim_generation bigint,
+  final_status text,
+  provider_message_id text,
+  error_message text,
+  sent_at timestamptz
+)
+returns boolean
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  select private.finalize_delivery(
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6
+  );
+$$;
+
+revoke all on function public.finalize_delivery(uuid, bigint, text, text, text, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.finalize_delivery(uuid, bigint, text, text, text, timestamptz)
+  to service_role;
 
 create or replace function public.notify_activity_insert()
 returns trigger
@@ -116,12 +312,7 @@ begin
     ) || '/functions/v1/notify-activity-insert',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret', (
-        select decrypted_secret
-        from vault.decrypted_secrets
-        where name = 'internal_job_secret'
-        limit 1
-      )
+      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
     ),
     body := jsonb_build_object(
       'type', 'INSERT',
@@ -131,12 +322,12 @@ begin
       'old_record', null
     )
   );
-
   return new;
 end;
 $$;
 
-revoke all on function public.notify_activity_insert() from public, anon, authenticated, service_role;
+revoke all on function public.notify_activity_insert()
+  from public, anon, authenticated, service_role;
 
 drop trigger if exists on_activity_insert on public.activities;
 create trigger on_activity_insert
@@ -162,8 +353,7 @@ select cron.schedule(
       || '/functions/v1/check-conditions',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret',
-      (select decrypted_secret from vault.decrypted_secrets where name = 'internal_job_secret' limit 1)
+      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
     ),
     body := '{}'::jsonb
   );
@@ -179,8 +369,7 @@ select cron.schedule(
       || '/functions/v1/process-deliveries',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret',
-      (select decrypted_secret from vault.decrypted_secrets where name = 'internal_job_secret' limit 1)
+      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
     ),
     body := '{}'::jsonb
   );
@@ -196,8 +385,7 @@ select cron.schedule(
       || '/functions/v1/sync-race-directory',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret',
-      (select decrypted_secret from vault.decrypted_secrets where name = 'internal_job_secret' limit 1)
+      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
     ),
     body := '{}'::jsonb
   );
@@ -213,8 +401,7 @@ select cron.schedule(
       || '/functions/v1/daily-research-brief',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret',
-      (select decrypted_secret from vault.decrypted_secrets where name = 'internal_job_secret' limit 1)
+      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
     ),
     body := jsonb_build_object('trigger', 'scheduled', 'timestamp', now()::text)
   );
@@ -230,8 +417,7 @@ select cron.schedule(
       || '/functions/v1/fetch-daily-articles',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'X-Runaway-Internal-Secret',
-      (select decrypted_secret from vault.decrypted_secrets where name = 'internal_job_secret' limit 1)
+      'X-Runaway-Internal-Secret', private.require_internal_job_secret()
     ),
     body := jsonb_build_object('trigger', 'scheduled', 'timestamp', now()::text)
   );

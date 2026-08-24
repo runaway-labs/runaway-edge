@@ -1,6 +1,7 @@
 // Pre-Race Alerts MVP: Resend Email Wrapper
 
-import { DeliveryResult } from "./types.ts";
+import type { DeliveryResult } from "./types.ts";
+import type { BeforeProviderSubmit } from "./twilio.ts";
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
@@ -14,6 +15,7 @@ export async function sendEmail(
   subject: string,
   body: string,
   idempotencyKey: string,
+  beforeSubmit: BeforeProviderSubmit,
 ): Promise<DeliveryResult> {
   const apiKey = Deno.env.get("RESEND_API_KEY");
   const fromEmail = Deno.env.get("FROM_EMAIL");
@@ -22,7 +24,8 @@ export async function sendEmail(
     return {
       success: false,
       error: "Missing Resend configuration (RESEND_API_KEY or FROM_EMAIL)",
-      retryable: false,
+      retryable: true,
+      outcome: "pre_provider_failure",
     };
   }
 
@@ -31,7 +34,19 @@ export async function sendEmail(
     return {
       success: false,
       error: `Invalid email address: ${to}`,
-      retryable: false,
+      retryable: true,
+      outcome: "pre_provider_failure",
+    };
+  }
+
+  try {
+    await beforeSubmit();
+  } catch {
+    return {
+      success: false,
+      error: "Unable to begin provider submission",
+      retryable: true,
+      outcome: "pre_provider_failure",
     };
   }
 
@@ -59,12 +74,15 @@ export async function sendEmail(
         success: false,
         error: data.message ?? `Resend error: ${response.status}`,
         retryable: response.status === 409 || response.status === 429 || response.status >= 500,
+        outcome: "provider_rejected",
       };
     }
 
     return {
       success: true,
       provider_message_id: data.id,
+      retryable: false,
+      outcome: "accepted",
     };
   } catch (error) {
     console.error("Error sending email via Resend:", error);
@@ -72,6 +90,7 @@ export async function sendEmail(
       success: false,
       error: error instanceof Error ? error.message : "Unknown error sending email",
       retryable: true,
+      outcome: "ambiguous_submission",
     };
   }
 }

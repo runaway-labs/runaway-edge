@@ -6,30 +6,18 @@ import { corsHeaders, handleCors, jsonResponse, errorResponse } from "../_shared
 import { sendSms, formatAlertSms } from "../_shared/twilio.ts";
 import { sendEmail, formatAlertEmail } from "../_shared/resend.ts";
 import { AlertDelivery, Alert, Race, DeliveryResult } from "../_shared/types.ts";
+import { createProcessDeliveriesHandler } from "./handler.ts";
 import {
-  internalAuthErrorResponse,
-  requireInternal,
-} from "../_shared/require-internal.ts";
+  beginDeliverySubmission,
+  DeliveryStateError,
+  finalizeDelivery,
+} from "./delivery-state.ts";
 
 // Process up to this many deliveries per invocation
 const BATCH_SIZE = 50;
 const MAX_ATTEMPTS = 3;
 
-Deno.serve(async (req: Request) => {
-  // Handle CORS preflight
-  const corsResponse = handleCors(req);
-  if (corsResponse) return corsResponse;
-
-  if (req.method !== "POST") {
-    return errorResponse("Method not allowed", 405);
-  }
-
-  try {
-    requireInternal(req);
-  } catch (error) {
-    return internalAuthErrorResponse(error, corsHeaders);
-  }
-
+export const handler = createProcessDeliveriesHandler(async (_req: Request) => {
   try {
     const supabase = getSupabaseAdmin();
 
@@ -82,6 +70,7 @@ Deno.serve(async (req: Request) => {
       sent: 0,
       retryable: 0,
       failed: 0,
+      finalization_failed: 0,
       errors: [] as string[],
     };
 
@@ -96,11 +85,19 @@ Deno.serve(async (req: Request) => {
           success: false,
           error: "Delivery context unavailable",
           retryable: true,
+          outcome: "pre_provider_failure",
         };
       } else if (delivery.channel === "sms") {
         // Send SMS
         const smsBody = formatAlertSms(race.name, alert.subject, alert.message);
-        result = await sendSms(delivery.recipient, smsBody);
+        result = await sendSms(
+          delivery.recipient,
+          smsBody,
+          () => beginDeliverySubmission(supabase, {
+            deliveryId: delivery.id,
+            claimGeneration: delivery.claim_generation,
+          }),
+        );
       } else {
         // Send email
         const { subject, body } = formatAlertEmail(
@@ -114,31 +111,34 @@ Deno.serve(async (req: Request) => {
           subject,
           body,
           delivery.idempotency_key,
+          () => beginDeliverySubmission(supabase, {
+            deliveryId: delivery.id,
+            claimGeneration: delivery.claim_generation,
+          }),
         );
       }
 
       const canRetry =
-        delivery.channel === "email" &&
-        result.retryable !== false &&
+        result.retryable &&
         delivery.attempt_count < MAX_ATTEMPTS;
       const nextStatus = result.success ? "sent" : canRetry ? "retryable" : "failed";
 
-      const updateData: Partial<AlertDelivery> = {
-        status: nextStatus,
-        sent_at: result.success ? new Date().toISOString() : null,
-        provider_message_id: result.provider_message_id ?? null,
-        error_message: result.error ?? null,
-        processing_started_at: null,
-      };
-
-      const { error: updateError } = await supabase
-        .from("alert_deliveries")
-        .update(updateData)
-        .eq("id", delivery.id)
-        .eq("status", "processing");
-
-      if (updateError) {
-        console.error(`Error updating delivery ${delivery.id}:`, updateError);
+      try {
+        await finalizeDelivery(supabase, {
+          deliveryId: delivery.id,
+          claimGeneration: delivery.claim_generation,
+          status: nextStatus,
+          sentAt: result.success ? new Date().toISOString() : null,
+          providerMessageId: result.provider_message_id ?? null,
+          errorMessage: result.error ?? null,
+        });
+      } catch (error) {
+        results.finalization_failed++;
+        results.errors.push(`delivery ${delivery.id}: finalization failed`);
+        if (!(error instanceof DeliveryStateError)) {
+          console.error(`Unexpected finalization error for delivery ${delivery.id}`);
+        }
+        continue;
       }
 
       if (result.success) {
@@ -157,11 +157,12 @@ Deno.serve(async (req: Request) => {
     );
 
     return jsonResponse({
-      success: true,
+      success: results.finalization_failed === 0,
       processed: deliveries.length,
       sent: results.sent,
       retryable: results.retryable,
       failed: results.failed,
+      finalization_failed: results.finalization_failed,
       errors: results.errors.length > 0 ? results.errors : undefined,
     });
   } catch (error) {
@@ -171,4 +172,8 @@ Deno.serve(async (req: Request) => {
       500
     );
   }
-});
+}, { headers: corsHeaders });
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

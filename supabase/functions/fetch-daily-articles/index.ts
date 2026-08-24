@@ -4,10 +4,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
-import {
-  internalAuthErrorResponse,
-  requireInternal,
-} from '../_shared/require-internal.ts'
+import { createFetchDailyArticlesHandler } from './handler.ts'
 
 // RSS Feed configuration
 interface RSSFeed {
@@ -304,25 +301,7 @@ async function fetchAllArticles(
 }
 
 // Edge function handler
-Deno.serve(async (req) => {
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
-  }
-
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  try {
-    requireInternal(req)
-  } catch (error) {
-    return internalAuthErrorResponse(error, corsHeaders)
-  }
-
+export const handler = createFetchDailyArticlesHandler(async (_req) => {
   try {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -369,4 +348,8 @@ Deno.serve(async (req) => {
       }
     )
   }
-})
+}, { headers: corsHeaders })
+
+if (import.meta.main) {
+  Deno.serve(handler)
+}

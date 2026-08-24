@@ -35,8 +35,10 @@
 ## Task 4 implementation notes
 
 - Internal handlers now require `X-Runaway-Internal-Secret` before body parsing or admin-client creation.
-- `private.claim_pending_deliveries(integer)` uses an atomic `FOR UPDATE SKIP LOCKED` claim, with a service-role-only public Data API wrapper.
-- Delivery rows persist a derived idempotency key and bounded `processing`, `retryable`, `sent`, and `failed` transitions.
+- `private.claim_pending_deliveries(integer)` uses an atomic `FOR UPDATE SKIP LOCKED` claim, with a service-role-only public Data API wrapper, a five-minute lease, and a monotonically increasing fencing generation. Expired processing work is reclaimable.
+- Submission and finalization require the current fence and an unexpired lease. Finalization failures make the handler result unsuccessful rather than silently reporting success.
+- Known pre-provider failures are retryable. Twilio ambiguous post-submission/network outcomes are terminal without provider idempotency; Resend ambiguity remains retryable only with its stable idempotency key.
+- `INTERNAL_JOB_SECRET` is fail-closed and canonical: exactly 64 lowercase hexadecimal characters encoding 32 bytes, at least eight distinct hex digits, with no prefix, separators, padding, uppercase, or whitespace. Provisioning remains blocked on Task 8 approval.
 - Cron and activity-trigger callers read `internal_job_secret` from Vault at execution time; no secret value was generated or provisioned.
 - Task 8 remains the hard approval gate for Edge secret/Vault provisioning, migration application, function deployment, and production verification.
-- Local Deno execution was unavailable (`deno` is not installed), and pgTAP runtime execution was unavailable because `TEST_DATABASE_URL` is unset. Safe fallback/static results are recorded in `task-4-implementation-report.md`.
+- Review-fix verification passed locally: guard 5/5, handler guard-order 7/7, Twilio outcomes 4/4, delivery state 5/5, plus syntax/static checks. Deno was unavailable (`command not found`, exit 127); pgTAP is authored at 36 assertions but DB execution was not run because `TEST_DATABASE_URL` is unset and Docker is unavailable. Exact results are recorded in `task-4-implementation-report.md`.

@@ -4,10 +4,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { sendPush } from "../_shared/apns.ts";
-import {
-  internalAuthErrorResponse,
-  requireInternal,
-} from "../_shared/require-internal.ts";
+import { createBreakthroughMilestonesHandler } from "./handler.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -330,19 +327,7 @@ async function sendBreakthroughPush(
   });
 }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-
-  if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed" }, 405);
-  }
-
-  try {
-    requireInternal(req);
-  } catch (error) {
-    return internalAuthErrorResponse(error, corsHeaders);
-  }
-
+export const handler = createBreakthroughMilestonesHandler(async (req) => {
   try {
     const body = await req.json() as { athlete_id?: number; activity_id?: number };
     const { athlete_id, activity_id } = body;
@@ -382,4 +367,8 @@ Deno.serve(async (req) => {
       500,
     );
   }
-});
+}, { headers: corsHeaders });
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

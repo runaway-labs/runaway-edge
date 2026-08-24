@@ -66,7 +66,7 @@ export interface Alert {
   created_at: string;
 }
 
-export type DeliveryStatus = "pending" | "processing" | "sent" | "delivered" | "retryable" | "failed";
+export type DeliveryStatus = "pending" | "processing" | "submitting" | "sent" | "delivered" | "retryable" | "failed";
 export type DeliveryChannel = "sms" | "email";
 
 export interface AlertDelivery {
@@ -79,6 +79,8 @@ export interface AlertDelivery {
   idempotency_key: string;
   attempt_count: number;
   processing_started_at: string | null;
+  claim_generation: number;
+  lease_expires_at: string | null;
   provider_message_id: string | null;
   error_message: string | null;
   sent_at: string | null;
@@ -177,7 +179,12 @@ export interface DeliveryResult {
   success: boolean;
   provider_message_id?: string;
   error?: string;
-  retryable?: boolean;
+  retryable: boolean;
+  outcome:
+    | "accepted"
+    | "pre_provider_failure"
+    | "provider_rejected"
+    | "ambiguous_submission";
 }
 
 // RunSignUp API types

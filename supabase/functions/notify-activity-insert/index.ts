@@ -3,34 +3,14 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { sendPush } from "../_shared/apns.ts";
-import {
-  internalAuthErrorResponse,
-  requireInternal,
-} from "../_shared/require-internal.ts";
+import { createNotifyActivityInsertHandler } from "./handler.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  try {
-    requireInternal(req);
-  } catch (error) {
-    return internalAuthErrorResponse(error, corsHeaders);
-  }
-
+export const handler = createNotifyActivityInsertHandler(async (req) => {
   try {
     const payload = await req.json();
     const { record } = payload;
@@ -113,4 +93,8 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-});
+}, { headers: corsHeaders });
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

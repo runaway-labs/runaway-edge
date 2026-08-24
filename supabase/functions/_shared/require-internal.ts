@@ -1,5 +1,6 @@
 const INTERNAL_SECRET_HEADER = "X-Runaway-Internal-Secret";
-const MAX_SECRET_BYTES = 256;
+const SECRET_BYTES = 32;
+const SECRET_HEX_LENGTH = SECRET_BYTES * 2;
 
 export class InternalAuthError extends Error {
   status: number;
@@ -17,14 +18,33 @@ export class InternalAuthError extends Error {
   }
 }
 
-function constantTimeEqual(expected: string, supplied: string): boolean {
-  const encoder = new TextEncoder();
-  const expectedBytes = encoder.encode(expected);
-  const suppliedBytes = encoder.encode(supplied);
-  let mismatch = expectedBytes.length ^ suppliedBytes.length;
+interface DecodedSecret {
+  bytes: Uint8Array;
+  valid: boolean;
+}
 
-  for (let index = 0; index < MAX_SECRET_BYTES; index += 1) {
-    mismatch |= (expectedBytes[index] ?? 0) ^ (suppliedBytes[index] ?? 0);
+function decodeCanonicalSecret(value: string | undefined): DecodedSecret {
+  const bytes = new Uint8Array(SECRET_BYTES);
+  const canonical =
+    value !== undefined &&
+    value.length === SECRET_HEX_LENGTH &&
+    /^[0-9a-f]{64}$/.test(value) &&
+    new Set(value).size >= 8;
+
+  if (canonical) {
+    for (let index = 0; index < SECRET_BYTES; index += 1) {
+      bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+    }
+  }
+
+  return { bytes, valid: canonical };
+}
+
+function constantTimeEqual(expected: DecodedSecret, supplied: DecodedSecret): boolean {
+  let mismatch = Number(!expected.valid) | Number(!supplied.valid);
+
+  for (let index = 0; index < SECRET_BYTES; index += 1) {
+    mismatch |= expected.bytes[index] ^ supplied.bytes[index];
   }
 
   return mismatch === 0;
@@ -34,9 +54,9 @@ export function createRequireInternal(
   getSecret: () => string | undefined,
 ): (req: Request) => void {
   return function requireInternal(req: Request): void {
-    const configuredSecret = getSecret();
+    const configuredSecret = decodeCanonicalSecret(getSecret());
 
-    if (!configuredSecret || new TextEncoder().encode(configuredSecret).length > MAX_SECRET_BYTES) {
+    if (!configuredSecret.valid) {
       throw new InternalAuthError(
         500,
         "INTERNAL_AUTH_NOT_CONFIGURED",
@@ -44,7 +64,9 @@ export function createRequireInternal(
       );
     }
 
-    const suppliedSecret = req.headers.get(INTERNAL_SECRET_HEADER) ?? "";
+    const suppliedSecret = decodeCanonicalSecret(
+      req.headers.get(INTERNAL_SECRET_HEADER) ?? undefined,
+    );
 
     if (!constantTimeEqual(configuredSecret, suppliedSecret)) {
       throw new InternalAuthError(
