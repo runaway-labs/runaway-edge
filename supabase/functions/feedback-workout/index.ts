@@ -53,7 +53,6 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
 
     const athleteId = context.athleteId
     const supabaseAdmin = deps.getAdmin()
-    const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 
     // Fetch activity, scoped to both activity ID and athlete ID
     const { data: activity, error: activityError } = await supabaseAdmin
@@ -118,6 +117,7 @@ Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
     let feedback = `You showed up today — that's what a ${runnerIdentity} does.`
 
     try {
+      const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
       const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {

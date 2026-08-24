@@ -64,6 +64,23 @@ function createGuard(calls: Array<number | null>): RequireUser {
   };
 }
 
+async function withProviderFetchSpy<T>(
+  action: () => Promise<T>,
+): Promise<{ result: T; providerCalls: number }> {
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = (() => {
+    providerCalls += 1;
+    throw new Error("provider fetch must not run");
+  }) as typeof fetch;
+
+  try {
+    return { result: await action(), providerCalls };
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 type QueryState = {
   table: string;
   selected?: string;
@@ -235,6 +252,34 @@ const endpointCases: EndpointCase[] = [
       }, authorization),
   },
   {
+    name: "journal-generate",
+    create: createJournalHandler,
+    request: (athleteId, authorization) =>
+      jsonRequest("https://example.test/journal/generate", "POST", {
+        athlete_id: athleteId,
+        week_start_date: "2026-08-24",
+      }, authorization),
+    ownerRequest: (authorization) =>
+      jsonRequest("https://example.test/journal/generate", "POST", {
+        athlete_id: ATHLETE_A,
+        week_start_date: "2026-08-24",
+      }, authorization),
+  },
+  {
+    name: "journal-generate-recent",
+    create: createJournalHandler,
+    request: (athleteId, authorization) =>
+      jsonRequest("https://example.test/journal/generate-recent", "POST", {
+        athlete_id: athleteId,
+        weeks: 1,
+      }, authorization),
+    ownerRequest: (authorization) =>
+      jsonRequest("https://example.test/journal/generate-recent", "POST", {
+        athlete_id: ATHLETE_A,
+        weeks: 1,
+      }, authorization),
+  },
+  {
     name: "journal",
     create: createJournalHandler,
     request: (athleteId, authorization) =>
@@ -260,9 +305,12 @@ for (const endpoint of endpointCases) {
       },
     });
 
-    const response = await handler(endpoint.request(ATHLETE_A));
+    const { result: response, providerCalls } = await withProviderFetchSpy(
+      () => handler(endpoint.request(ATHLETE_A)),
+    );
     assertEquals(response.status, 401);
     assertEquals(adminCalls, 0);
+    assertEquals(providerCalls, 0);
   });
 
   Deno.test(`${endpoint.name}: invalid token returns 401 before service access`, async () => {
@@ -275,9 +323,12 @@ for (const endpoint of endpointCases) {
       },
     });
 
-    const response = await handler(endpoint.request(ATHLETE_A, "Bearer invalid-token"));
+    const { result: response, providerCalls } = await withProviderFetchSpy(
+      () => handler(endpoint.request(ATHLETE_A, "Bearer invalid-token")),
+    );
     assertEquals(response.status, 401);
     assertEquals(adminCalls, 0);
+    assertEquals(providerCalls, 0);
   });
 
   Deno.test(`${endpoint.name}: athlete substitution returns 403 before service access`, async () => {
@@ -291,10 +342,13 @@ for (const endpoint of endpointCases) {
       },
     });
 
-    const response = await handler(endpoint.request(ATHLETE_B, "Bearer valid-token"));
+    const { result: response, providerCalls } = await withProviderFetchSpy(
+      () => handler(endpoint.request(ATHLETE_B, "Bearer valid-token")),
+    );
     assertEquals(response.status, 403);
     assertEquals(guardCalls, [ATHLETE_B]);
     assertEquals(adminCalls, 0);
+    assertEquals(providerCalls, 0);
   });
 
   Deno.test(`${endpoint.name}: matching athlete reaches its domain contract`, async () => {
@@ -308,6 +362,63 @@ for (const endpoint of endpointCases) {
     assert(response.status !== 401 && response.status !== 403, "matching owner must not receive an auth rejection");
   });
 }
+
+Deno.test("feedback-workout scopes activity_id lookup to the authenticated athlete", async () => {
+  const operations: QueryState[] = [];
+  const handler = createFeedbackWorkoutHandler({
+    requireUser: createGuard([]),
+    getAdmin: () => createAdmin(operations, (state) => {
+      if (state.table === "activities") {
+        return { data: null, error: { code: "PGRST116" } };
+      }
+      return { data: null, error: null };
+    }),
+  });
+
+  const response = await handler(jsonRequest(
+    "https://example.test/feedback-workout",
+    "POST",
+    { athlete_id: ATHLETE_A, activity_id: 123 },
+    "Bearer valid-token",
+  ));
+
+  assertEquals(response.status, 404);
+  assertEquals(operations[0].table, "activities");
+  assertEquals(operations[0].filters, [
+    ["id", 123],
+    ["athlete_id", ATHLETE_A],
+  ]);
+});
+
+Deno.test("check-milestones scopes activity_id lookup to the authenticated athlete", async () => {
+  const operations: QueryState[] = [];
+  const handler = createCheckMilestonesHandler({
+    requireUser: createGuard([]),
+    getAdmin: () => createAdmin(operations, (state) => {
+      if (state.table === "activities" && state.selected === "id") {
+        return { data: { id: 123 }, error: null };
+      }
+      if (state.table === "runner_identity_milestones") {
+        return { data: [], error: null };
+      }
+      return { data: [], error: null };
+    }),
+  });
+
+  const response = await handler(jsonRequest(
+    "https://example.test/check-milestones",
+    "POST",
+    { athlete_id: ATHLETE_A, activity_id: 123 },
+    "Bearer valid-token",
+  ));
+
+  assertEquals(response.status, 200);
+  assertEquals(operations[0].table, "activities");
+  assertEquals(operations[0].filters, [
+    ["id", 123],
+    ["athlete_id", ATHLETE_A],
+  ]);
+});
 
 Deno.test("sync-beta rejects unbounded and invalid workloads before service access", async () => {
   const invalidBodies = [
@@ -404,6 +515,7 @@ Deno.test("journal generate-recent caps client work at four weeks", async () => 
 Deno.test("user-races rejects missing and invalid tokens before service access", async () => {
   for (const authorization of [undefined, "Bearer invalid-token"]) {
     let adminCalls = 0;
+    let providerCalls = 0;
     const handler = createUserRacesHandler({
       requireUser: createGuard([]),
       getAdmin: () => {
@@ -411,12 +523,60 @@ Deno.test("user-races rejects missing and invalid tokens before service access",
         return createAdmin([]);
       },
       getEnv: () => "test-provider-credential",
+      fetch: async () => {
+        providerCalls += 1;
+        throw new Error("provider fetch must not run");
+      },
     });
     const response = await handler(new Request("https://example.test/user-races", {
       headers: authorization ? { Authorization: authorization } : undefined,
     }));
     assertEquals(response.status, 401);
     assertEquals(adminCalls, 0);
+    assertEquals(providerCalls, 0);
+  }
+});
+
+Deno.test("backfill-splits does not consume or log failed Strava refresh bodies", async () => {
+  const operations: QueryState[] = [];
+  const providerResponse = new Response("sensitive-provider-body", { status: 500 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createBackfillSplitsHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin(operations, (state) => {
+        if (state.table === "activities") {
+          return { data: [{ id: 123 }], error: null };
+        }
+        if (state.table === "athletes") {
+          return { data: { refresh_token: "test-refresh-token" }, error: null };
+        }
+        return { data: null, error: null };
+      }),
+      getEnv: () => "test-client-credential",
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/backfill-splits",
+      "POST",
+      { athlete_id: ATHLETE_A, limit: 1 },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-provider-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-provider-body"), "provider body must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
   }
 });
 

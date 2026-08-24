@@ -12,10 +12,21 @@ import {
 
 const STRAVA_API_BASE = 'https://www.strava.com/api/v3'
 const MAX_BACKFILL_ACTIVITIES = 100
+const STRAVA_TOKEN_REFRESH_FAILED = 'STRAVA_TOKEN_REFRESH_FAILED'
 
-async function refreshAccessToken(supabase: any, athleteId: number): Promise<string> {
-  const stravaClientId = Deno.env.get('STRAVA_CLIENT_ID')
-  const stravaClientSecret = Deno.env.get('STRAVA_CLIENT_SECRET')
+interface BackfillDependencies extends UserEndpointDependencies {
+  fetch: typeof fetch
+  getEnv: (name: string) => string | undefined
+}
+
+async function refreshAccessToken(
+  supabase: any,
+  athleteId: number,
+  fetchImpl: typeof fetch,
+  getEnv: (name: string) => string | undefined,
+): Promise<string> {
+  const stravaClientId = getEnv('STRAVA_CLIENT_ID')
+  const stravaClientSecret = getEnv('STRAVA_CLIENT_SECRET')
 
   if (!stravaClientId || !stravaClientSecret) {
     throw new Error('Missing Strava API credentials')
@@ -31,7 +42,7 @@ async function refreshAccessToken(supabase: any, athleteId: number): Promise<str
     throw new Error(`No refresh token for athlete ${athleteId}`)
   }
 
-  const res = await fetch('https://www.strava.com/oauth/token', {
+  const res = await fetchImpl('https://www.strava.com/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -42,7 +53,13 @@ async function refreshAccessToken(supabase: any, athleteId: number): Promise<str
     })
   })
 
-  if (!res.ok) throw new Error(`Token refresh failed: ${await res.text()}`)
+  if (!res.ok) {
+    console.error('Strava token refresh failed', {
+      code: STRAVA_TOKEN_REFRESH_FAILED,
+      status: res.status,
+    })
+    throw new Error(`${STRAVA_TOKEN_REFRESH_FAILED}: Unable to refresh Strava access token`)
+  }
 
   const token = await res.json()
   await supabase.from('athletes').update({
@@ -54,8 +71,13 @@ async function refreshAccessToken(supabase: any, athleteId: number): Promise<str
   return token.access_token
 }
 
-export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
-  const deps = resolveUserEndpointDependencies(overrides)
+export function createHandler(overrides: Partial<BackfillDependencies> = {}) {
+  const userDeps = resolveUserEndpointDependencies(overrides)
+  const deps: BackfillDependencies = {
+    ...userDeps,
+    fetch: overrides.fetch ?? globalThis.fetch,
+    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
+  }
 
   return async (req: Request) => {
     if (req.method === 'OPTIONS') {
@@ -113,7 +135,12 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
 
   console.log(`Backfilling splits for ${activities.length} activities (athlete ${athleteId})`)
 
-  const accessToken = await refreshAccessToken(supabase, athleteId)
+  const accessToken = await refreshAccessToken(
+    supabase,
+    athleteId,
+    deps.fetch,
+    deps.getEnv,
+  )
   const headers = { 'Authorization': `Bearer ${accessToken}` }
 
   let updated = 0
@@ -124,7 +151,7 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
       // Strava rate limit: 100 req/15min, 1000/day — add small delay between calls
       await new Promise(r => setTimeout(r, 200))
 
-      const res = await fetch(`${STRAVA_API_BASE}/activities/${activity.id}`, { headers })
+      const res = await deps.fetch(`${STRAVA_API_BASE}/activities/${activity.id}`, { headers })
 
       if (res.status === 429) {
         console.warn('Strava rate limit hit — stopping early')
