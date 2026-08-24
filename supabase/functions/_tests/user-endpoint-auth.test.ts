@@ -297,17 +297,16 @@ for (const endpoint of endpointCases) {
   Deno.test(`${endpoint.name}: no token returns 401 before service access`, async () => {
     const guardCalls: Array<number | null> = [];
     let adminCalls = 0;
-    const handler = endpoint.create({
-      requireUser: createGuard(guardCalls),
-      getAdmin: () => {
-        adminCalls += 1;
-        return createAdmin([]);
-      },
+    const { result: response, providerCalls } = await withProviderFetchSpy(() => {
+      const handler = endpoint.create({
+        requireUser: createGuard(guardCalls),
+        getAdmin: () => {
+          adminCalls += 1;
+          return createAdmin([]);
+        },
+      });
+      return handler(endpoint.request(ATHLETE_A));
     });
-
-    const { result: response, providerCalls } = await withProviderFetchSpy(
-      () => handler(endpoint.request(ATHLETE_A)),
-    );
     assertEquals(response.status, 401);
     assertEquals(adminCalls, 0);
     assertEquals(providerCalls, 0);
@@ -315,17 +314,16 @@ for (const endpoint of endpointCases) {
 
   Deno.test(`${endpoint.name}: invalid token returns 401 before service access`, async () => {
     let adminCalls = 0;
-    const handler = endpoint.create({
-      requireUser: createGuard([]),
-      getAdmin: () => {
-        adminCalls += 1;
-        return createAdmin([]);
-      },
+    const { result: response, providerCalls } = await withProviderFetchSpy(() => {
+      const handler = endpoint.create({
+        requireUser: createGuard([]),
+        getAdmin: () => {
+          adminCalls += 1;
+          return createAdmin([]);
+        },
+      });
+      return handler(endpoint.request(ATHLETE_A, "Bearer invalid-token"));
     });
-
-    const { result: response, providerCalls } = await withProviderFetchSpy(
-      () => handler(endpoint.request(ATHLETE_A, "Bearer invalid-token")),
-    );
     assertEquals(response.status, 401);
     assertEquals(adminCalls, 0);
     assertEquals(providerCalls, 0);
@@ -334,17 +332,16 @@ for (const endpoint of endpointCases) {
   Deno.test(`${endpoint.name}: athlete substitution returns 403 before service access`, async () => {
     const guardCalls: Array<number | null> = [];
     let adminCalls = 0;
-    const handler = endpoint.create({
-      requireUser: createGuard(guardCalls),
-      getAdmin: () => {
-        adminCalls += 1;
-        return createAdmin([]);
-      },
+    const { result: response, providerCalls } = await withProviderFetchSpy(() => {
+      const handler = endpoint.create({
+        requireUser: createGuard(guardCalls),
+        getAdmin: () => {
+          adminCalls += 1;
+          return createAdmin([]);
+        },
+      });
+      return handler(endpoint.request(ATHLETE_B, "Bearer valid-token"));
     });
-
-    const { result: response, providerCalls } = await withProviderFetchSpy(
-      () => handler(endpoint.request(ATHLETE_B, "Bearer valid-token")),
-    );
     assertEquals(response.status, 403);
     assertEquals(guardCalls, [ATHLETE_B]);
     assertEquals(adminCalls, 0);
@@ -445,6 +442,103 @@ Deno.test("sync-beta rejects unbounded and invalid workloads before service acce
     assertEquals(response.status, 400);
     assertEquals(payload.error.code, "INVALID_REQUEST");
     assertEquals(adminCalls, 0);
+  }
+});
+
+Deno.test("sync-beta does not consume or log failed Strava token refresh bodies", async () => {
+  const providerResponse = new Response("sensitive-refresh-body", { status: 401 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createSyncBetaHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "athletes") {
+          return {
+            data: {
+              id: ATHLETE_A,
+              access_token: "expired-access-token",
+              refresh_token: "test-refresh-token",
+              token_expires_at: "2000-01-01T00:00:00.000Z",
+              strava_connected: true,
+            },
+            error: null,
+          };
+        }
+        return { data: [], error: null };
+      }),
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/sync-beta",
+      "POST",
+      { user_id: ATHLETE_A, max_activities: 1 },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 401);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-refresh-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-refresh-body"), "provider body must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("sync-beta does not consume or log failed Strava activity bodies", async () => {
+  const providerResponse = new Response("sensitive-activity-body", { status: 503 });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+
+  try {
+    const handler = createSyncBetaHandler({
+      requireUser: createGuard([]),
+      getAdmin: () => createAdmin([], (state) => {
+        if (state.table === "athletes") {
+          return {
+            data: {
+              id: ATHLETE_A,
+              access_token: "valid-access-token",
+              refresh_token: "test-refresh-token",
+              token_expires_at: "2999-01-01T00:00:00.000Z",
+              strava_connected: true,
+            },
+            error: null,
+          };
+        }
+        if (state.table === "activity_types") {
+          return { data: [], error: null };
+        }
+        return { data: [], error: null };
+      }),
+      fetch: async () => providerResponse,
+    });
+
+    const response = await handler(jsonRequest(
+      "https://example.test/sync-beta",
+      "POST",
+      { user_id: ATHLETE_A, max_activities: 1 },
+      "Bearer valid-token",
+    ));
+    const responseText = await response.text();
+    const logText = JSON.stringify(logged);
+
+    assertEquals(response.status, 500);
+    assertEquals(providerResponse.bodyUsed, false);
+    assert(!responseText.includes("sensitive-activity-body"), "provider body must not reach the response");
+    assert(!logText.includes("sensitive-activity-body"), "provider body must not reach logs");
+  } finally {
+    console.error = originalConsoleError;
   }
 });
 

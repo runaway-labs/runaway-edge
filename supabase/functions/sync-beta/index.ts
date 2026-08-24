@@ -13,6 +13,12 @@ import {
 const STRAVA_API_BASE = 'https://www.strava.com/api/v3'
 const STRAVA_PAGE_SIZE = 100 // Max allowed by Strava API
 const MAX_SYNC_ACTIVITIES = 500
+const STRAVA_TOKEN_REFRESH_FAILED = 'STRAVA_TOKEN_REFRESH_FAILED'
+const STRAVA_ACTIVITY_FETCH_FAILED = 'STRAVA_ACTIVITY_FETCH_FAILED'
+
+interface SyncDependencies extends UserEndpointDependencies {
+  fetch: typeof fetch
+}
 
 interface StravaActivity {
   id: number
@@ -48,8 +54,12 @@ interface StravaActivity {
   laps?: any[]
 }
 
-export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
-  const deps = resolveUserEndpointDependencies(overrides)
+export function createHandler(overrides: Partial<SyncDependencies> = {}) {
+  const userDeps = resolveUserEndpointDependencies(overrides)
+  const deps: SyncDependencies = {
+    ...userDeps,
+    fetch: overrides.fetch ?? globalThis.fetch,
+  }
 
   return async (req: Request) => {
   // Handle CORS preflight
@@ -138,7 +148,12 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
 
     if (tokenExpiresAt && tokenExpiresAt <= new Date()) {
       console.log('Token expired, refreshing...')
-      const refreshed = await refreshStravaToken(athlete.refresh_token, supabaseAdmin, athleteId)
+      const refreshed = await refreshStravaToken(
+        athlete.refresh_token,
+        supabaseAdmin,
+        athleteId,
+        deps.fetch,
+      )
       if (!refreshed) {
         return new Response(
           JSON.stringify({ error: { code: 'TOKEN_REFRESH_FAILED', message: 'Failed to refresh Strava token' } }),
@@ -170,7 +185,13 @@ export function createHandler(overrides: Partial<UserEndpointDependencies> = {})
 
     // Fetch activities from Strava
     console.log(`Fetching up to ${max_activities} activities from Strava...`)
-    const activities = await fetchStravaActivities(accessToken, max_activities, after, before)
+    const activities = await fetchStravaActivities(
+      accessToken,
+      max_activities,
+      after,
+      before,
+      deps.fetch,
+    )
     console.log(`Fetched ${activities.length} activities from Strava`)
 
     if (activities.length === 0) {
@@ -266,10 +287,11 @@ if (import.meta.main) {
 async function refreshStravaToken(
   refreshToken: string,
   supabase: any,
-  athleteId: number
+  athleteId: number,
+  fetchImpl: typeof fetch,
 ): Promise<string | null> {
   try {
-    const response = await fetch('https://www.strava.com/oauth/token', {
+    const response = await fetchImpl('https://www.strava.com/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -281,7 +303,10 @@ async function refreshStravaToken(
     })
 
     if (!response.ok) {
-      console.error('Token refresh failed:', await response.text())
+      console.error('Strava token refresh failed', {
+        code: STRAVA_TOKEN_REFRESH_FAILED,
+        status: response.status,
+      })
       return null
     }
 
@@ -308,7 +333,8 @@ async function fetchStravaActivities(
   accessToken: string,
   limit: number,
   after?: number,
-  before?: number
+  before?: number,
+  fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<StravaActivity[]> {
   const allActivities: StravaActivity[] = []
   let page = 1
@@ -328,14 +354,16 @@ async function fetchStravaActivities(
     const url = `${STRAVA_API_BASE}/athlete/activities?${params.toString()}`
     console.log(`Fetching page ${page}...`)
 
-    const response = await fetch(url, {
+    const response = await fetchImpl(url, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('Strava API error:', response.status, errorText)
-      throw new Error(`Strava API error: ${response.status}`)
+      console.error('Strava activity fetch failed', {
+        code: STRAVA_ACTIVITY_FETCH_FAILED,
+        status: response.status,
+      })
+      throw new Error(`${STRAVA_ACTIVITY_FETCH_FAILED}: Unable to fetch Strava activities`)
     }
 
     const pageActivities: StravaActivity[] = await response.json()

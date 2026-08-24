@@ -63,6 +63,15 @@ mutation was performed.
 - Made the backfill provider boundary injectable and removed all reads of failed
   Strava refresh response bodies. Failures log only HTTP status plus the fixed
   `STRAVA_TOKEN_REFRESH_FAILED` code and throw a fixed safe message.
+- Made the sync provider boundary injectable and removed all reads of failed
+  Strava token-refresh and activity-fetch response bodies. Failures retain only
+  HTTP status plus the fixed `STRAVA_TOKEN_REFRESH_FAILED` or
+  `STRAVA_ACTIVITY_FETCH_FAILED` code/message.
+- Installed rejected-request provider spies before handler construction, so
+  handlers such as `backfill-splits` that capture `fetch` during construction
+  cannot bypass the assertion.
+- Added focused sync tests proving failed refresh and activity response bodies
+  remain unread and cannot reach handler responses or captured logs.
 
 ## Tests and static checks
 
@@ -70,7 +79,7 @@ Required endpoint suite:
 
 ```text
 $ npx --yes deno test supabase/functions/_tests/user-endpoint-auth.test.ts
-ok | 46 passed | 0 failed (29ms)
+ok | 48 passed | 0 failed (43ms)
 ```
 
 The table-driven cases cover missing token, invalid token, athlete substitution,
@@ -84,7 +93,7 @@ Existing shared guard regression suite:
 
 ```text
 $ npx --yes deno test supabase/functions/_shared/require-user.test.ts
-ok | 9 passed | 0 failed (16ms)
+ok | 9 passed | 0 failed (26ms)
 ```
 
 Static type check:
