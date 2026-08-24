@@ -29,16 +29,25 @@ runaway-edge/
 ### AI Coaching
 | Function | Description |
 |----------|-------------|
-| `chat` | AI coaching conversations via Claude with RAG over activity history |
+| `chat` | AI coaching conversations via Claude with RAG over activity history; injects runner identity when `adlerian_profile` is set |
 | `journal` | AI-generated weekly training summaries |
-| `goal-assessment` | Structured goal analysis and insights |
+| `goal-assessment` | Structured goal analysis and insights; reads `running_goals.goal_framing` to frame in identity terms |
 | `comprehensive-analysis` | Deep training load and performance analysis |
 | `daily-brief` | Race-aware daily training brief (taper mode at 21 days pre-race) |
 | `daily-research-brief` | Daily personalized research summary |
 | `activity-observations` | Twin observation tracking per activity |
 | `micro-wins` | Small win detection from activity data |
-| `pre-run-brief` | Personalized audio coaching cues for an upcoming run (numeric-validated) |
-| `backfill-training-zones` | Compute and write 5-zone HR model from activity history (FR-8 dependency for `pre-run-brief`) |
+| `breakthrough-milestones` | Quality breakthrough detection from activity history; fires APNs push (called fire-and-forget by `notify-activity-insert`) |
+
+### Runner Mindset (Adlerian)
+Encouragement-first coaching surfaces backed by an identity model. See `agent/memory/runner_mindset_architecture.md` for the full architecture.
+
+| Function | Description |
+|----------|-------------|
+| `identity-profile` | Classify runner into one of five identity labels via Claude Haiku 4.5; merge `adlerian_profile` into `core_memory`; seed milestones; write `goal_framing` for active goal |
+| `feedback-workout` | 2–3 sentence Adlerian post-workout encouragement; writes to `activity_insights` with `insight_type = 'adlerian_feedback'` |
+| `generate-run-cues` | 12 personalized in-run voice cues (Claude Haiku 4.5 dated build); pure generation, no DB writes |
+| `check-milestones` | Server-side milestone evaluation across full run history; updates `runner_identity_milestones.earned`; returns `newly_earned` keys |
 
 ### Integrations
 | Function | Description |
@@ -103,6 +112,40 @@ INSERT into activities
 ```
 
 Required secrets for APNs: `APNS_KEY_P8`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`, `APNS_PRODUCTION`
+
+## Runner Mindset Architecture
+
+The Runner Mindset system applies Adlerian psychology to coaching: runners are encouraged for showing up, named for who they are, and never compared to PRs or goals. The word "Adlerian" is internal-only — DB columns and edge function comments use it, but the iOS surface uses "Running Mindset" / "Runner Identity."
+
+```
+iOS                                Edge Functions                    Postgres
+───                                ──────────────                    ────────
+Onboarding step ──────► identity-profile ──► athlete_ai_profiles.core_memory
+                                              .adlerian_profile (JSONB)
+                                              + runner_identity_milestones (seed)
+                                              + running_goals.goal_framing
+
+Activity save  ────┬──► feedback-workout ──► activity_insights
+                                              (insight_type = 'adlerian_feedback')
+                   └──► check-milestones ──► runner_identity_milestones
+                                              (earned = true on detected milestones)
+
+Run start    ──────► generate-run-cues ──► (no DB writes; returns 12 cues)
+                                                      │
+                                                      ▼
+                          AudioCueService speaks cues:
+                            • 3s after each split announcement
+                            • on ≥20% pace slump (90s shared cooldown)
+
+Chat / Goals / Plan generation ──► identity injected into Claude system prompt
+                                   when adlerian_profile is present (graceful no-op when absent)
+```
+
+**Five identity labels:** `Morning Runner`, `Trail Explorer`, `Consistent Builder` (default), `Weekend Warrior`, `Comeback Runner`.
+
+**Six seed milestones:** `first_run`, `streak_7`, `distance_5k`, `distance_half`, `consistency_4weeks`, `comeback`.
+
+**Tone rules (enforced in prompts):** open with showing-up acknowledgment, name identity naturally, never compare to goal/PR/previous run, no pivot language ("but"/"however"), no filler ("You've got this"). Identity summary stays under 20 words and never references pace/distance/PRs.
 
 ## Local Development
 

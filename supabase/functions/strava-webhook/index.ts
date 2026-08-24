@@ -127,7 +127,8 @@ function transformActivityData(athleteId: number, record: any) {
     start_latitude: record.start_latlng?.[0] || null,
     start_longitude: record.start_latlng?.[1] || null,
     end_latitude: record.end_latlng?.[0] || null,
-    end_longitude: record.end_latlng?.[1] || null
+    end_longitude: record.end_latlng?.[1] || null,
+    splits: record.splits_metric || null
   }
 
   // Convert undefined to null

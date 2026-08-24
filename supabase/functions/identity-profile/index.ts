@@ -72,6 +72,8 @@ function computeActivityStats(activities: Array<{
   return { totalRuns, totalDistanceKm, weekendRuns, avgElevation, hasComeback }
 }
 
+const DEFAULT_IDENTITY_SUMMARY = 'You show up consistently and keep building your running practice.'
+
 async function callClaudeIdentity(
   stats: ReturnType<typeof computeActivityStats>,
   why_i_run: string,
@@ -101,42 +103,50 @@ Respond with ONLY valid JSON, no markdown:
   "identity_summary": "<one sentence, second person, under 20 words, never mention pace/goals/PRs>"
 }`
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY || '',
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5',
-      max_tokens: 200,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error('Anthropic identity API error:', errorText)
-    throw new Error(`Anthropic API error: ${response.status}`)
-  }
-
-  const data = await response.json()
-  const rawText = data.content[0].text.trim()
-
-  let parsed: { runner_identity: string; identity_summary: string }
+  // Identity classification falls back to the default identity on any failure.
+  // Saving the profile must succeed even if Anthropic is unreachable or rate-limited —
+  // the runner can re-classify later by editing the mindset.
   try {
-    parsed = JSON.parse(rawText)
-  } catch {
-    console.error('Failed to parse Claude identity response:', rawText)
-    return { runner_identity: DEFAULT_IDENTITY, identity_summary: 'You show up consistently and keep building your running practice.' }
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY || '',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5',
+        max_tokens: 200,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('Anthropic identity API error:', response.status, errorText)
+      return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
+    }
+
+    const data = await response.json()
+    const rawText = data.content[0].text.trim()
+
+    let parsed: { runner_identity: string; identity_summary: string }
+    try {
+      parsed = JSON.parse(rawText)
+    } catch {
+      console.error('Failed to parse Claude identity response:', rawText)
+      return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
+    }
+
+    const runner_identity = isValidIdentityLabel(parsed.runner_identity)
+      ? parsed.runner_identity
+      : DEFAULT_IDENTITY
+
+    return { runner_identity, identity_summary: parsed.identity_summary ?? DEFAULT_IDENTITY_SUMMARY }
+  } catch (err) {
+    console.error('Identity classification call failed (non-fatal):', err)
+    return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
   }
-
-  const runner_identity = isValidIdentityLabel(parsed.runner_identity)
-    ? parsed.runner_identity
-    : DEFAULT_IDENTITY
-
-  return { runner_identity, identity_summary: parsed.identity_summary ?? '' }
 }
 
 async function callClaudeGoalFraming(
@@ -285,15 +295,21 @@ Deno.serve(async (req) => {
     }
 
     if (activeGoal) {
-      const goal_framing = await callClaudeGoalFraming(activeGoal, runner_identity)
+      // Goal-framing is best-effort — a Claude failure here must not abort
+      // the identity save. The identity write above has already succeeded.
+      try {
+        const goal_framing = await callClaudeGoalFraming(activeGoal, runner_identity)
 
-      const { error: goalUpdateError } = await supabaseAdmin
-        .from('running_goals')
-        .update({ goal_framing })
-        .eq('id', activeGoal.id)
+        const { error: goalUpdateError } = await supabaseAdmin
+          .from('running_goals')
+          .update({ goal_framing })
+          .eq('id', activeGoal.id)
 
-      if (goalUpdateError) {
-        console.error('Error updating goal_framing:', goalUpdateError)
+        if (goalUpdateError) {
+          console.error('Error updating goal_framing:', goalUpdateError)
+        }
+      } catch (err) {
+        console.error('Goal-framing call failed (non-fatal):', err)
       }
     }
 
