@@ -1,6 +1,6 @@
 begin;
 
-select plan(17);
+select plan(33);
 
 select ok(
   not has_table_privilege('anon', 'public.profiles', 'select'),
@@ -123,6 +123,29 @@ values
   (900000001, current_date - 7, current_date - 1, 'Security containment A journal'),
   (900000002, current_date - 7, current_date - 1, 'Security containment B journal');
 
+insert into public.chat_conversations (
+  athlete_id,
+  conversation_id,
+  message,
+  role,
+  "timestamp"
+)
+values
+  (
+    900000001,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'Security containment A conversation',
+    'user',
+    '2026-08-17 08:00:00'::timestamp
+  ),
+  (
+    900000002,
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    'Security containment B conversation',
+    'user',
+    '2026-08-17 09:00:00'::timestamp
+  );
+
 insert into public.weekly_training_plans (
   athlete_id,
   week_start_date,
@@ -135,10 +158,73 @@ values
 
 set local role anon;
 select throws_ok(
+  $$select * from public.activity_summary$$,
+  '42501',
+  null,
+  'anon cannot query activity_summary'
+);
+
+select throws_ok(
+  $$select * from public.analytics_activity_funnel$$,
+  '42501',
+  null,
+  'anon cannot query analytics_activity_funnel'
+);
+
+select throws_ok(
+  $$select * from public.analytics_activity_hours$$,
+  '42501',
+  null,
+  'anon cannot query analytics_activity_hours'
+);
+
+select throws_ok(
+  $$select * from public.analytics_audio_coaching$$,
+  '42501',
+  null,
+  'anon cannot query analytics_audio_coaching'
+);
+
+select throws_ok(
+  $$select * from public.analytics_daily_summary$$,
+  '42501',
+  null,
+  'anon cannot query analytics_daily_summary'
+);
+
+select throws_ok(
+  $$select * from public.analytics_user_engagement$$,
+  '42501',
+  null,
+  'anon cannot query analytics_user_engagement'
+);
+
+select throws_ok(
+  $$select * from public.conversation_summaries$$,
+  '42501',
+  null,
+  'anon cannot query conversation_summaries'
+);
+
+select throws_ok(
+  $$select * from public.monthly_activity_stats$$,
+  '42501',
+  null,
+  'anon cannot query monthly_activity_stats'
+);
+
+select throws_ok(
   $$select * from public.profiles$$,
   '42501',
   null,
   'anon cannot query profiles'
+);
+
+select throws_ok(
+  $$select * from public.recent_journal_entries$$,
+  '42501',
+  null,
+  'anon cannot query recent_journal_entries'
 );
 
 reset role;
@@ -162,6 +248,11 @@ select is_empty(
 );
 
 select is_empty(
+  $$select 1 from public.conversation_summaries where athlete_id = 900000002$$,
+  'user A cannot select user B through conversation_summaries'
+);
+
+select is_empty(
   $$select 1 from public.monthly_activity_stats where athlete_id = 900000002$$,
   'user A cannot select user B through monthly_activity_stats'
 );
@@ -177,10 +268,24 @@ select is_empty(
 );
 
 select throws_ok(
-  $$select public.get_current_week_plan(900000002)$$,
+  $$select public.best_split_pr(900000002, 1, 0::double precision, 1000::double precision)$$,
   '42501',
   'not authorized',
-  'user A cannot invoke an athlete-ID RPC for user B'
+  'user A cannot invoke best_split_pr for user B'
+);
+
+select throws_ok(
+  $$select public.check_onboarding_status(900000002)$$,
+  '42501',
+  'not authorized',
+  'user A cannot invoke check_onboarding_status for user B'
+);
+
+select throws_ok(
+  $$select public.detect_rest_days(900000002, 1)$$,
+  '42501',
+  'not authorized',
+  'user A cannot invoke detect_rest_days for user B'
 );
 
 select throws_ok(
@@ -188,6 +293,34 @@ select throws_ok(
   '42501',
   'not authorized',
   'user A cannot create or look up an athlete for user B'
+);
+
+select throws_ok(
+  $$select public.get_consecutive_rest_days(900000002, '2026-08-24'::date)$$,
+  '42501',
+  'not authorized',
+  'user A cannot invoke get_consecutive_rest_days for user B'
+);
+
+select throws_ok(
+  $$select public.get_current_week_plan(900000002)$$,
+  '42501',
+  'not authorized',
+  'user A cannot invoke get_current_week_plan for user B'
+);
+
+select throws_ok(
+  $$select * from public.get_rest_day_history(900000002, 30)$$,
+  '42501',
+  'not authorized',
+  'user A cannot invoke get_rest_day_history for user B'
+);
+
+select throws_ok(
+  $$select public.get_rest_days_count(900000002, '2026-08-01'::date, '2026-08-24'::date)$$,
+  '42501',
+  'not authorized',
+  'user A cannot invoke get_rest_days_count for user B'
 );
 
 select * from finish();
