@@ -2,7 +2,12 @@
 // Handle Garmin OAuth 2.0 PKCE callbacks after consuming server-side state.
 
 import { corsHeaders } from "../_shared/cors.ts";
-import { consumeOAuthState, hashOAuthState, OAuthStateError } from "../_shared/oauth-state.ts";
+import {
+  createOAuthCallbackHandler,
+  scopeCredentialWrite,
+  type CredentialScopeQuery,
+} from "../_shared/oauth-handler.ts";
+import { consumeOAuthState, hashOAuthState } from "../_shared/oauth-state.ts";
 import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -27,22 +32,16 @@ function redirectResponse(redirectUrl: string, success: boolean): Response {
   });
 }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+interface GarminCredentialPayload {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresIn: number | null;
+}
 
-  let trustedRedirect: string | null = null;
-  try {
-    const requestUrl = new URL(req.url);
-    const state = requestUrl.searchParams.get("state");
-    if (!state) throw new OAuthStateError();
-
-    const consumed = await consumeOAuthState({ provider: "garmin", state });
-    trustedRedirect = consumed.redirectUrl;
-
-    if (requestUrl.searchParams.has("error")) return redirectResponse(trustedRedirect, false);
-    const code = requestUrl.searchParams.get("code");
-    if (!code) return redirectResponse(trustedRedirect, false);
-
+Deno.serve(createOAuthCallbackHandler<GarminCredentialPayload>({
+  provider: "garmin",
+  consumeState: consumeOAuthState,
+  exchangeCode: async ({ code, state }) => {
     const clientId = Deno.env.get("GARMIN_CONSUMER_KEY")?.trim();
     const clientSecret = Deno.env.get("GARMIN_CONSUMER_SECRET")?.trim();
     const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim();
@@ -58,9 +57,13 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (pkceError || !pkce || typeof pkce.token_secret !== "string") {
       console.error("GARMIN_PKCE_LOOKUP_FAILED");
-      return redirectResponse(trustedRedirect, false);
+      throw new Error("GARMIN_PKCE_LOOKUP_FAILED");
     }
-    await admin.from("garmin_oauth_tokens").delete().eq("oauth_token", stateHash);
+    const { error: deleteError } = await admin
+      .from("garmin_oauth_tokens")
+      .delete()
+      .eq("oauth_token", stateHash);
+    if (deleteError) throw new Error("GARMIN_PKCE_DELETE_FAILED");
 
     const tokenResponse = await fetch("https://diauth.garmin.com/di-oauth2-service/oauth/token", {
       method: "POST",
@@ -76,7 +79,7 @@ Deno.serve(async (req) => {
     });
     if (!tokenResponse.ok) {
       console.error("GARMIN_TOKEN_EXCHANGE_FAILED", { status: tokenResponse.status });
-      return redirectResponse(trustedRedirect, false);
+      throw new Error("GARMIN_TOKEN_EXCHANGE_FAILED");
     }
 
     const tokenData = await tokenResponse.json() as Record<string, unknown>;
@@ -89,48 +92,44 @@ Deno.serve(async (req) => {
       (expiresIn !== undefined && typeof expiresIn !== "number")
     ) {
       console.error("GARMIN_TOKEN_RESPONSE_INVALID");
-      return redirectResponse(trustedRedirect, false);
+      throw new Error("GARMIN_TOKEN_RESPONSE_INVALID");
     }
 
+    return {
+      accessToken,
+      refreshToken: typeof refreshToken === "string" ? refreshToken : null,
+      expiresIn: typeof expiresIn === "number" ? expiresIn : null,
+    };
+  },
+  writeCredentials: async (token, binding) => {
     const now = new Date();
     const credentials = {
-      garmin_access_token: accessToken,
-      garmin_refresh_token: typeof refreshToken === "string" ? refreshToken : null,
-      garmin_token_expires_at: typeof expiresIn === "number"
-        ? new Date(now.getTime() + expiresIn * 1000).toISOString()
+      garmin_access_token: token.accessToken,
+      garmin_refresh_token: token.refreshToken,
+      garmin_token_expires_at: token.expiresIn !== null
+        ? new Date(now.getTime() + token.expiresIn * 1000).toISOString()
         : null,
       garmin_connected: true,
       garmin_connected_at: now.toISOString(),
       updated_at: now.toISOString(),
     };
-    const { data: linkedAthlete, error: updateError } = await admin
+    const query = getSupabaseAdmin()
       .from("athletes")
-      .update(credentials)
-      .eq("auth_user_id", consumed.authUserId)
+      .update(credentials);
+    scopeCredentialWrite(query as unknown as CredentialScopeQuery, binding);
+    const { data: linkedAthlete, error: updateError } = await query
       .select("id")
       .maybeSingle();
 
     if (updateError || !linkedAthlete) {
-      const { error: fallbackError } = await admin.from("garmin_connections").upsert({
-        auth_user_id: consumed.authUserId,
-        access_token: accessToken,
-        refresh_token: typeof refreshToken === "string" ? refreshToken : null,
-        expires_at: credentials.garmin_token_expires_at,
-        connected_at: now.toISOString(),
-      }, { onConflict: "auth_user_id" });
-      if (fallbackError) {
-        console.error("GARMIN_CREDENTIAL_STORAGE_FAILED");
-        return redirectResponse(trustedRedirect, false);
-      }
+      console.error("GARMIN_CREDENTIAL_STORAGE_FAILED");
+      throw new Error("GARMIN_CREDENTIAL_STORAGE_FAILED");
     }
-
-    return redirectResponse(trustedRedirect, true);
-  } catch (error) {
-    if (error instanceof OAuthStateError) {
-      return jsonResponse({ success: false, error: "OAuth session is invalid or expired" }, 400);
-    }
-    console.error("GARMIN_OAUTH_CALLBACK_FAILED");
-    if (trustedRedirect) return redirectResponse(trustedRedirect, false);
-    return jsonResponse({ success: false, error: "Connection failed. Please try again." }, 500);
-  }
-});
+  },
+  successResponse: (_token, binding) => redirectResponse(binding.redirectUrl, true),
+  deniedResponse: (binding) => redirectResponse(binding.redirectUrl, false),
+  failureResponse: (binding) => redirectResponse(binding.redirectUrl, false),
+  invalidStateResponse: () =>
+    jsonResponse({ success: false, error: "OAuth session is invalid or expired" }, 400),
+  optionsResponse: () => new Response(null, { headers: corsHeaders }),
+}));

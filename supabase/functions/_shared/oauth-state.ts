@@ -21,12 +21,13 @@ export interface OAuthStateService {
   createOAuthState(input: {
     provider: OAuthProvider;
     authUserId: string;
+    athleteId: number;
     redirectUrl: string;
   }): Promise<string>;
   consumeOAuthState(input: {
     provider: OAuthProvider;
     state: string;
-  }): Promise<{ authUserId: string; redirectUrl: string }>;
+  }): Promise<{ authUserId: string; athleteId: number; redirectUrl: string }>;
 }
 
 export class OAuthStateError extends Error {
@@ -83,6 +84,8 @@ export function createOAuthStateService(
       if (
         !validProvider(input.provider) ||
         !validAuthUserId(input.authUserId) ||
+        !Number.isSafeInteger(input.athleteId) ||
+        input.athleteId <= 0 ||
         !input.redirectUrl ||
         input.redirectUrl.length > 2048
       ) {
@@ -101,6 +104,7 @@ export function createOAuthStateService(
           p_state_hash: stateHash,
           p_provider: input.provider,
           p_auth_user_id: input.authUserId,
+          p_athlete_id: input.athleteId,
           p_redirect_url: input.redirectUrl,
           p_expires_at: new Date(now().getTime() + OAUTH_STATE_TTL_MS).toISOString(),
         });
@@ -128,12 +132,19 @@ export function createOAuthStateService(
         if (error || !Array.isArray(data) || data.length !== 1) throw new OAuthStateError();
 
         const row = data[0] as Record<string, unknown>;
-        if (typeof row.auth_user_id !== "string" || typeof row.redirect_url !== "string") {
+        const athleteId = Number(row.athlete_id);
+        if (
+          typeof row.auth_user_id !== "string" ||
+          !Number.isSafeInteger(athleteId) ||
+          athleteId <= 0 ||
+          typeof row.redirect_url !== "string"
+        ) {
           throw new OAuthStateError();
         }
 
         return {
           authUserId: row.auth_user_id,
+          athleteId,
           redirectUrl: row.redirect_url,
         };
       } catch (error) {

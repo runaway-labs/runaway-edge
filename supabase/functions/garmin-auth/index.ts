@@ -2,6 +2,7 @@
 // Initiate a Garmin OAuth 2.0 PKCE flow for the authenticated athlete.
 
 import { corsHeaders } from "../_shared/cors.ts";
+import { createOAuthInitiationHandler } from "../_shared/oauth-handler.ts";
 import { createOAuthState, hashOAuthState } from "../_shared/oauth-state.ts";
 import { HttpError, requireUser } from "../_shared/require-user.ts";
 import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
@@ -66,14 +67,9 @@ async function requestedRedirect(req: Request): Promise<unknown> {
   }
 }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  if (req.method !== "GET" && req.method !== "POST") {
-    return jsonResponse({ success: false, error: "Method not allowed" }, 405);
-  }
-
-  try {
-    const user = await requireUser(req);
+Deno.serve(createOAuthInitiationHandler({
+  requireUser,
+  begin: async (req, user) => {
     const redirectUrl = safeRedirect(await requestedRedirect(req));
     const clientId = Deno.env.get("GARMIN_CONSUMER_KEY")?.trim();
     const clientSecret = Deno.env.get("GARMIN_CONSUMER_SECRET")?.trim();
@@ -85,6 +81,7 @@ Deno.serve(async (req) => {
     const state = await createOAuthState({
       provider: "garmin",
       authUserId: user.authUserId,
+      athleteId: user.athleteId,
       redirectUrl,
     });
     const stateHash = await hashOAuthState(state);
@@ -115,11 +112,15 @@ Deno.serve(async (req) => {
       authorization_url: authorizationUrl.toString(),
       oauth_token: state,
     });
-  } catch (error) {
+  },
+  errorResponse: (error) => {
     if (error instanceof HttpError) {
       return jsonResponse({ success: false, error: error.message, code: error.code }, error.status);
     }
     console.error("GARMIN_AUTH_INITIATION_FAILED");
     return jsonResponse({ success: false, error: "Unable to start Garmin connection" }, 500);
-  }
-});
+  },
+  methodNotAllowedResponse: () =>
+    jsonResponse({ success: false, error: "Method not allowed" }, 405),
+  optionsResponse: () => new Response(null, { headers: corsHeaders }),
+}));

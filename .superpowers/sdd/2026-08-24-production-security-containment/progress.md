@@ -48,9 +48,10 @@
 
 ## Task 5 implementation notes
 
-- OAuth initiation now requires `requireUser()` before request parsing or state creation, ignores caller-supplied auth identity, and binds state to the verified auth user and athlete relationship.
-- State is 32 cryptographically random bytes encoded as base64url. Only its SHA-256 digest is persisted in `private.oauth_states`, with a ten-minute TTL, provider and trusted redirect binding, service-role-only access, and atomic one-time consumption.
+- OAuth initiation now requires `requireUser()` before request parsing or state creation, ignores caller-supplied auth identity, and persists both the verified auth user ID and athlete ID in state.
+- State is 32 cryptographically random bytes encoded as base64url. Only its SHA-256 digest is persisted in `private.oauth_states`, with a ten-minute TTL, provider, verified user/athlete pair, trusted redirect binding, service-role-only access, and atomic one-time consumption.
 - Strava and Garmin callbacks have gateway `verify_jwt = false`, but reject missing, malformed, expired, provider-mismatched, consumed, or replayed state with a sanitized `400` before code exchange or credential writes.
 - Garmin PKCE remains supported; its verifier is indexed by the state digest rather than plaintext state. Existing pre-deployment PKCE rows are not deleted or rewritten and naturally expire within their existing ten-minute TTL.
-- Safe local verification passed: OAuth state tests 8/8, TypeScript syntax 6/6, pgTAP plan 36/36, and guard/callback/JWT/logging boundary checks. Deno is unavailable (exit 127); DB pgTAP was not run because `TEST_DATABASE_URL` is unset and Docker is unavailable.
+- Safe local verification passed after review fixes: OAuth state and handler tests 16/16, TypeScript syntax 8/8, pgTAP plan 38/38, and athlete-binding/concurrency/cleanup/guard/callback/JWT/scoping/logging boundary checks. Deno is unavailable (exit 127); DB pgTAP was not run because `TEST_DATABASE_URL` is unset and Docker is unavailable.
 - Task 8 must apply `20260824162713_oauth_state_security.sql` and deploy all four OAuth functions/config as a coordinated rollout. No migration, deployment, secret provisioning, or live action occurred in Task 5.
+- Task 8 must handle legacy Garmin plaintext-state/PKCE rows before switching callbacks: block old initiation and drain/wait the full ten-minute TTL, or explicitly invalidate those temporary rows through an approved production action. Task 5 performed no production cleanup.

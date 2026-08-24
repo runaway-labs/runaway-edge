@@ -2,6 +2,7 @@
 // Initiate a Strava OAuth flow for the authenticated athlete.
 
 import { corsHeaders } from "../_shared/cors.ts";
+import { createOAuthInitiationHandler } from "../_shared/oauth-handler.ts";
 import { createOAuthState } from "../_shared/oauth-state.ts";
 import { HttpError, requireUser } from "../_shared/require-user.ts";
 
@@ -48,14 +49,9 @@ async function requestedRedirect(req: Request): Promise<unknown> {
   }
 }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  if (req.method !== "GET" && req.method !== "POST") {
-    return jsonResponse({ success: false, error: "Method not allowed" }, 405);
-  }
-
-  try {
-    const user = await requireUser(req);
+Deno.serve(createOAuthInitiationHandler({
+  requireUser,
+  begin: async (req, user) => {
     const redirectUrl = safeRedirect(await requestedRedirect(req));
     const clientId = Deno.env.get("STRAVA_CLIENT_ID")?.trim();
     const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim();
@@ -64,6 +60,7 @@ Deno.serve(async (req) => {
     const state = await createOAuthState({
       provider: "strava",
       authUserId: user.authUserId,
+      athleteId: user.athleteId,
       redirectUrl,
     });
     const authorizationUrl = new URL("https://www.strava.com/oauth/authorize");
@@ -77,11 +74,15 @@ Deno.serve(async (req) => {
     }).toString();
 
     return jsonResponse({ success: true, authorization_url: authorizationUrl.toString() });
-  } catch (error) {
+  },
+  errorResponse: (error) => {
     if (error instanceof HttpError) {
       return jsonResponse({ success: false, error: error.message, code: error.code }, error.status);
     }
     console.error("STRAVA_AUTH_INITIATION_FAILED");
     return jsonResponse({ success: false, error: "Unable to start Strava connection" }, 500);
-  }
-});
+  },
+  methodNotAllowedResponse: () =>
+    jsonResponse({ success: false, error: "Method not allowed" }, 405),
+  optionsResponse: () => new Response(null, { headers: corsHeaders }),
+}));

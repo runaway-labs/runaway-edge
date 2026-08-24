@@ -2,7 +2,12 @@
 // Handle Strava OAuth callbacks after consuming server-side state.
 
 import { corsHeaders } from "../_shared/cors.ts";
-import { consumeOAuthState, OAuthStateError } from "../_shared/oauth-state.ts";
+import {
+  createOAuthCallbackHandler,
+  scopeCredentialWrite,
+  type CredentialScopeQuery,
+} from "../_shared/oauth-handler.ts";
+import { consumeOAuthState } from "../_shared/oauth-state.ts";
 import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -28,22 +33,18 @@ function redirectResponse(redirectUrl: string, success: boolean, athleteId?: num
   });
 }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+interface StravaCredentialPayload {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  providerAthleteId: number;
+  athlete: Record<string, unknown>;
+}
 
-  let trustedRedirect: string | null = null;
-  try {
-    const requestUrl = new URL(req.url);
-    const state = requestUrl.searchParams.get("state");
-    if (!state) throw new OAuthStateError();
-
-    const consumed = await consumeOAuthState({ provider: "strava", state });
-    trustedRedirect = consumed.redirectUrl;
-
-    if (requestUrl.searchParams.has("error")) return redirectResponse(trustedRedirect, false);
-    const code = requestUrl.searchParams.get("code");
-    if (!code) return redirectResponse(trustedRedirect, false);
-
+Deno.serve(createOAuthCallbackHandler<StravaCredentialPayload>({
+  provider: "strava",
+  consumeState: consumeOAuthState,
+  exchangeCode: async ({ code }) => {
     const clientId = Deno.env.get("STRAVA_CLIENT_ID")?.trim();
     const clientSecret = Deno.env.get("STRAVA_CLIENT_SECRET")?.trim();
     if (!clientId || !clientSecret) throw new Error("STRAVA_CALLBACK_NOT_CONFIGURED");
@@ -60,7 +61,7 @@ Deno.serve(async (req) => {
     });
     if (!tokenResponse.ok) {
       console.error("STRAVA_TOKEN_EXCHANGE_FAILED", { status: tokenResponse.status });
-      return redirectResponse(trustedRedirect, false);
+      throw new Error("STRAVA_TOKEN_EXCHANGE_FAILED");
     }
 
     const tokenData = await tokenResponse.json() as Record<string, unknown>;
@@ -77,46 +78,48 @@ Deno.serve(async (req) => {
       !Number.isSafeInteger(providerAthleteId)
     ) {
       console.error("STRAVA_TOKEN_RESPONSE_INVALID");
-      return redirectResponse(trustedRedirect, false);
+      throw new Error("STRAVA_TOKEN_RESPONSE_INVALID");
     }
 
+    return { accessToken, refreshToken, expiresAt, providerAthleteId, athlete };
+  },
+  writeCredentials: async (token, binding) => {
     const now = new Date().toISOString();
-    const { data: linkedAthlete, error: updateError } = await getSupabaseAdmin()
+    const query = getSupabaseAdmin()
       .from("athletes")
       .update({
-        strava_athlete_id: providerAthleteId,
-        first_name: typeof athlete.firstname === "string" ? athlete.firstname : null,
-        last_name: typeof athlete.lastname === "string" ? athlete.lastname : null,
-        email: typeof athlete.email === "string" ? athlete.email : null,
-        sex: typeof athlete.sex === "string" ? athlete.sex : null,
-        weight: typeof athlete.weight === "number" ? athlete.weight : 0,
-        city: typeof athlete.city === "string" ? athlete.city : null,
-        state: typeof athlete.state === "string" ? athlete.state : null,
-        country: typeof athlete.country === "string" ? athlete.country : null,
-        premium: athlete.premium === true,
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        token_expires_at: new Date(expiresAt * 1000).toISOString(),
+        strava_athlete_id: token.providerAthleteId,
+        first_name: typeof token.athlete.firstname === "string" ? token.athlete.firstname : null,
+        last_name: typeof token.athlete.lastname === "string" ? token.athlete.lastname : null,
+        email: typeof token.athlete.email === "string" ? token.athlete.email : null,
+        sex: typeof token.athlete.sex === "string" ? token.athlete.sex : null,
+        weight: typeof token.athlete.weight === "number" ? token.athlete.weight : 0,
+        city: typeof token.athlete.city === "string" ? token.athlete.city : null,
+        state: typeof token.athlete.state === "string" ? token.athlete.state : null,
+        country: typeof token.athlete.country === "string" ? token.athlete.country : null,
+        premium: token.athlete.premium === true,
+        access_token: token.accessToken,
+        refresh_token: token.refreshToken,
+        token_expires_at: new Date(token.expiresAt * 1000).toISOString(),
         strava_connected: true,
         strava_connected_at: now,
         updated_at: now,
-      })
-      .eq("auth_user_id", consumed.authUserId)
+      });
+    scopeCredentialWrite(query as unknown as CredentialScopeQuery, binding);
+    const { data: linkedAthlete, error: updateError } = await query
       .select("id")
       .maybeSingle();
 
     if (updateError || !linkedAthlete) {
       console.error("STRAVA_CREDENTIAL_STORAGE_FAILED");
-      return redirectResponse(trustedRedirect, false);
+      throw new Error("STRAVA_CREDENTIAL_STORAGE_FAILED");
     }
-
-    return redirectResponse(trustedRedirect, true, providerAthleteId);
-  } catch (error) {
-    if (error instanceof OAuthStateError) {
-      return jsonResponse({ success: false, error: "OAuth session is invalid or expired" }, 400);
-    }
-    console.error("STRAVA_OAUTH_CALLBACK_FAILED");
-    if (trustedRedirect) return redirectResponse(trustedRedirect, false);
-    return jsonResponse({ success: false, error: "Connection failed. Please try again." }, 500);
-  }
-});
+  },
+  successResponse: (token, binding) =>
+    redirectResponse(binding.redirectUrl, true, token.providerAthleteId),
+  deniedResponse: (binding) => redirectResponse(binding.redirectUrl, false),
+  failureResponse: (binding) => redirectResponse(binding.redirectUrl, false),
+  invalidStateResponse: () =>
+    jsonResponse({ success: false, error: "OAuth session is invalid or expired" }, 400),
+  optionsResponse: () => new Response(null, { headers: corsHeaders }),
+}));

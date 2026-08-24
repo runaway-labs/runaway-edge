@@ -33,6 +33,7 @@ interface StoredState {
   stateHash: string;
   provider: string;
   authUserId: string;
+  athleteId: number;
   redirectUrl: string;
   expiresAt: Date;
   consumedAt: Date | null;
@@ -56,6 +57,7 @@ class InMemoryOAuthStateRpc implements OAuthStateRpcClient {
         stateHash,
         provider: String(args.p_provider),
         authUserId: String(args.p_auth_user_id),
+        athleteId: Number(args.p_athlete_id),
         redirectUrl: String(args.p_redirect_url),
         expiresAt: new Date(String(args.p_expires_at)),
         consumedAt: null,
@@ -75,7 +77,11 @@ class InMemoryOAuthStateRpc implements OAuthStateRpcClient {
 
     state.consumedAt = this.now();
     return {
-      data: [{ auth_user_id: state.authUserId, redirect_url: state.redirectUrl }],
+      data: [{
+        auth_user_id: state.authUserId,
+        athlete_id: state.athleteId,
+        redirect_url: state.redirectUrl,
+      }],
       error: null,
     };
   }
@@ -109,6 +115,7 @@ Deno.test("createOAuthState returns 32 random bytes as opaque base64url and pers
   const state = await service.createOAuthState({
     provider: "strava",
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "runaway://strava-connected",
   });
 
@@ -121,6 +128,7 @@ Deno.test("createOAuthState returns 32 random bytes as opaque base64url and pers
     stateHash: "ea866a757e4c38babfa8127cbe9a409d3e1f93a00ff1488ff735fcf917afffd0",
     provider: "strava",
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "runaway://strava-connected",
     expiresAt: new Date("2026-08-24T12:10:00.000Z"),
     consumedAt: null,
@@ -132,11 +140,13 @@ Deno.test("consumeOAuthState returns the server-bound user and redirect exactly 
   const state = await service.createOAuthState({
     provider: "strava",
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "https://runaway-web-203308554831.us-central1.run.app/settings",
   });
 
   assertEquals(await service.consumeOAuthState({ provider: "strava", state }), {
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "https://runaway-web-203308554831.us-central1.run.app/settings",
   });
   await expectInvalidState(() => service.consumeOAuthState({ provider: "strava", state }));
@@ -155,6 +165,7 @@ Deno.test("consumeOAuthState rejects an expired state", async () => {
   const state = await service.createOAuthState({
     provider: "strava",
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "runaway://strava-connected",
   });
   setTime("2026-08-24T12:10:00.000Z");
@@ -167,12 +178,14 @@ Deno.test("consumeOAuthState rejects a provider mismatch without consuming the v
   const state = await service.createOAuthState({
     provider: "garmin",
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "runaway://garmin-connected",
   });
 
   await expectInvalidState(() => service.consumeOAuthState({ provider: "strava", state }));
   assertEquals(await service.consumeOAuthState({ provider: "garmin", state }), {
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "runaway://garmin-connected",
   });
 });
@@ -189,18 +202,23 @@ Deno.test("distinct OAuth state values remain bound to their verified users", as
   const stateA = await service.createOAuthState({
     provider: "strava",
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "runaway://strava-connected",
   });
   const stateB = await service.createOAuthState({
     provider: "strava",
     authUserId: "22222222-2222-2222-2222-222222222222",
+    athleteId: 202,
     redirectUrl: "https://runaway-web-203308554831.us-central1.run.app/settings",
   });
 
   assertEquals((await service.consumeOAuthState({ provider: "strava", state: stateA })).authUserId,
     "11111111-1111-1111-1111-111111111111");
-  assertEquals((await service.consumeOAuthState({ provider: "strava", state: stateB })).authUserId,
-    "22222222-2222-2222-2222-222222222222");
+  assertEquals(await service.consumeOAuthState({ provider: "strava", state: stateB }), {
+    authUserId: "22222222-2222-2222-2222-222222222222",
+    athleteId: 202,
+    redirectUrl: "https://runaway-web-203308554831.us-central1.run.app/settings",
+  });
 });
 
 Deno.test("concurrent consumption has exactly one winner", async () => {
@@ -208,6 +226,7 @@ Deno.test("concurrent consumption has exactly one winner", async () => {
   const state = await service.createOAuthState({
     provider: "garmin",
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "runaway://garmin-connected",
   });
 
@@ -234,6 +253,7 @@ Deno.test("database failures are sanitized without leaking provider or state det
   await expectInvalidState(() => service.createOAuthState({
     provider: "garmin",
     authUserId: "11111111-1111-1111-1111-111111111111",
+    athleteId: 101,
     redirectUrl: "runaway://garmin-connected",
   }));
 });

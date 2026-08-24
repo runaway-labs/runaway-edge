@@ -4,6 +4,7 @@ create table private.oauth_states (
   state_hash text primary key,
   provider text not null,
   auth_user_id uuid not null,
+  athlete_id bigint not null,
   redirect_url text not null,
   expires_at timestamptz not null,
   consumed_at timestamptz,
@@ -45,6 +46,7 @@ create or replace function public.create_oauth_state(
   p_state_hash text,
   p_provider text,
   p_auth_user_id uuid,
+  p_athlete_id bigint,
   p_redirect_url text,
   p_expires_at timestamptz
 )
@@ -67,6 +69,15 @@ begin
     raise exception using errcode = '22023', message = 'invalid OAuth user';
   end if;
 
+  if p_athlete_id is null or not exists (
+    select 1
+    from public.athletes as athlete
+    where athlete.id = p_athlete_id
+      and athlete.auth_user_id = p_auth_user_id
+  ) then
+    raise exception using errcode = '22023', message = 'invalid OAuth athlete binding';
+  end if;
+
   if p_redirect_url is null or length(p_redirect_url) not between 1 and 2048 then
     raise exception using errcode = '22023', message = 'invalid OAuth redirect';
   end if;
@@ -84,21 +95,23 @@ begin
     state_hash,
     provider,
     auth_user_id,
+    athlete_id,
     redirect_url,
     expires_at
   ) values (
     p_state_hash,
     p_provider,
     p_auth_user_id,
+    p_athlete_id,
     p_redirect_url,
     p_expires_at
   );
 end;
 $$;
 
-revoke all on function public.create_oauth_state(text, text, uuid, text, timestamptz)
+revoke all on function public.create_oauth_state(text, text, uuid, bigint, text, timestamptz)
   from public, anon, authenticated;
-grant execute on function public.create_oauth_state(text, text, uuid, text, timestamptz)
+grant execute on function public.create_oauth_state(text, text, uuid, bigint, text, timestamptz)
   to service_role;
 
 create or replace function public.consume_oauth_state(
@@ -107,6 +120,7 @@ create or replace function public.consume_oauth_state(
 )
 returns table (
   auth_user_id uuid,
+  athlete_id bigint,
   redirect_url text
 )
 language sql
@@ -120,7 +134,7 @@ as $$
     and oauth_state.provider = p_provider
     and oauth_state.expires_at > clock_timestamp()
     and oauth_state.consumed_at is null
-  returning oauth_state.auth_user_id, oauth_state.redirect_url;
+  returning oauth_state.auth_user_id, oauth_state.athlete_id, oauth_state.redirect_url;
 $$;
 
 revoke all on function public.consume_oauth_state(text, text)
