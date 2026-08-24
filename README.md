@@ -21,7 +21,7 @@ runaway-edge/
     │   │   ├── weather-api.ts
     │   │   └── aqi-api.ts
     │   └── [37 functions]        # See function inventory below
-    └── migrations/               # 17 PostgreSQL migrations
+    └── migrations/               # PostgreSQL migrations (derived from this directory)
 ```
 
 ## Function Inventory

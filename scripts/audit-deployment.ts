@@ -36,6 +36,13 @@ export interface DeploymentInventory {
     authenticatedExecute: boolean;
     serviceRoleExecute: boolean;
   }>;
+  serviceOnlyRpcs: Array<{
+    signature: string;
+    category: "delivery" | "oauth-state";
+    anonExecute: boolean;
+    authenticatedExecute: boolean;
+    serviceRoleExecute: boolean;
+  }>;
 }
 
 export interface FunctionConfig {
@@ -215,6 +222,14 @@ export const PRIVILEGED_RPC_SIGNATURES = [
   "public.get_rest_days_count(integer,date,date)",
 ];
 
+export const SERVICE_ONLY_RPC_SIGNATURES = [
+  { signature: "public.begin_delivery_submission(uuid,bigint)", category: "delivery" as const },
+  { signature: "public.claim_pending_deliveries(integer)", category: "delivery" as const },
+  { signature: "public.finalize_delivery(uuid,bigint,text,text,text,timestamp with time zone)", category: "delivery" as const },
+  { signature: "public.consume_oauth_state(text,text)", category: "oauth-state" as const },
+  { signature: "public.create_oauth_state(text,text,uuid,bigint,text,timestamp with time zone)", category: "oauth-state" as const },
+];
+
 const SECRET_PATTERNS: Array<[string, RegExp]> = [
   ["JWT literal", /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/],
   ["Supabase secret literal", /\bsb_secret_[A-Za-z0-9_-]{10,}/],
@@ -368,6 +383,7 @@ function requireInventoryShape(inventory: DeploymentInventory | undefined): stri
   if (!Array.isArray(inventory.cronTargets)) errors.push("inventory cronTargets section is missing");
   if (!Array.isArray(inventory.triggerTargets)) errors.push("inventory triggerTargets section is missing");
   if (!Array.isArray(inventory.privilegedRpcs)) errors.push("inventory privilegedRpcs section is missing");
+  if (!Array.isArray(inventory.serviceOnlyRpcs)) errors.push("inventory serviceOnlyRpcs section is missing");
   return errors;
 }
 
@@ -560,6 +576,26 @@ export async function auditDeployment(
     if (!rpc.serviceRoleExecute) errors.push(rpc.signature + ": service_role EXECUTE grant is missing");
   }
 
+  const serviceOnlyInventory = inventory.serviceOnlyRpcs ?? [];
+  const serviceOnlySignatures = serviceOnlyInventory.map((rpc) => rpc.signature);
+  if (new Set(serviceOnlySignatures).size !== serviceOnlySignatures.length) errors.push("service-only RPC inventory contains duplicate signatures");
+  const actualServiceOnlySignatures = new Set(serviceOnlySignatures);
+  const expectedServiceOnlySignatures = new Set(SERVICE_ONLY_RPC_SIGNATURES.map((rpc) => rpc.signature));
+  errors.push(...setDifference(expectedServiceOnlySignatures, actualServiceOnlySignatures).map((signature) => "service-only RPC inventory missing " + signature));
+  errors.push(...setDifference(actualServiceOnlySignatures, expectedServiceOnlySignatures).map((signature) => "service-only RPC inventory unexpected " + signature));
+  const expectedServiceOnlyBySignature = new Map(SERVICE_ONLY_RPC_SIGNATURES.map((rpc) => [rpc.signature, rpc.category]));
+  for (const rpc of serviceOnlyInventory) {
+    if (rpc.category !== expectedServiceOnlyBySignature.get(rpc.signature)) errors.push(rpc.signature + ": service-only RPC category mismatch");
+    if (typeof rpc.anonExecute !== "boolean" || typeof rpc.authenticatedExecute !== "boolean" ||
+      typeof rpc.serviceRoleExecute !== "boolean") {
+      errors.push(rpc.signature + ": service-only RPC role grant data is incomplete");
+      continue;
+    }
+    if (rpc.anonExecute) errors.push(rpc.signature + ": anon must not have EXECUTE on service-only RPC");
+    if (rpc.authenticatedExecute) errors.push(rpc.signature + ": authenticated must not have EXECUTE on service-only RPC");
+    if (!rpc.serviceRoleExecute) errors.push(rpc.signature + ": service_role EXECUTE grant is missing on service-only RPC");
+  }
+
   errors.push(...comparePairs("cron inventory", (inventory.cronTargets ?? []).map((entry) => [entry.jobName, entry.target]), EXPECTED_CRON as Array<[string, string]>));
   errors.push(...comparePairs("trigger inventory", (inventory.triggerTargets ?? []).map((entry) => [entry.triggerName, entry.target]), EXPECTED_TRIGGERS as Array<[string, string]>));
 
@@ -661,6 +697,9 @@ async function attachRemoteBundleHashes(
 const PRIVILEGED_RPC_VALUES_SQL = PRIVILEGED_RPC_SIGNATURES
   .map((signature) => "('" + signature.replaceAll("'", "''") + "')")
   .join(",");
+const SERVICE_ONLY_RPC_VALUES_SQL = SERVICE_ONLY_RPC_SIGNATURES
+  .map((rpc) => "('" + rpc.signature.replaceAll("'", "''") + "','" + rpc.category + "')")
+  .join(",");
 
 const LIVE_INVENTORY_SQL = [
   "select 'migration'::text as kind, version::text as key, null::text as value, true as passed from supabase_migrations.schema_migrations",
@@ -675,10 +714,11 @@ const LIVE_INVENTORY_SQL = [
   `union all select 'assumption','privileged_rpcs_anon_revoked',null,coalesce((select bool_and(to_regprocedure(v.signature) is not null and not has_function_privilege('anon',v.signature,'execute')) from (values ${PRIVILEGED_RPC_VALUES_SQL}) v(signature)),false)`,
   "union all select 'assumption','athlete_rpcs_owner_guarded',null, exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='private' and p.proname='current_user_owns_athlete')",
   "union all select 'assumption','internal_delivery_schema',null, (select count(*)=5 from information_schema.columns where table_schema='public' and table_name='alert_deliveries' and column_name in ('attempt_count','processing_started_at','claim_generation','lease_expires_at','idempotency_key'))",
-  "union all select 'assumption','internal_job_rpcs_service_only',null, to_regprocedure('public.claim_pending_deliveries(integer)') is not null and not has_function_privilege('anon','public.claim_pending_deliveries(integer)','execute')",
+  `union all select 'service_only_rpc',v.signature,json_build_object('category',v.category,'anon_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('anon',v.signature,'execute') end,'authenticated_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('authenticated',v.signature,'execute') end,'service_role_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('service_role',v.signature,'execute') end)::text,true from (values ${SERVICE_ONLY_RPC_VALUES_SQL}) v(signature,category)`,
+  `union all select 'assumption','internal_job_rpcs_service_only',null,coalesce((select bool_and(case when to_regprocedure(v.signature) is null then false else not has_function_privilege('anon',v.signature,'execute') and not has_function_privilege('authenticated',v.signature,'execute') and has_function_privilege('service_role',v.signature,'execute') end) from (values ${SERVICE_ONLY_RPC_VALUES_SQL}) v(signature,category) where v.category='delivery'),false)`,
   "union all select 'assumption','internal_callers_use_dedicated_secret',null, to_regprocedure('private.require_internal_job_secret()') is not null and (select count(*)=5 from cron.job where command like '%X-Runaway-Internal-Secret%')",
   "union all select 'assumption','oauth_states_secure',null, to_regclass('private.oauth_states') is not null and (select relrowsecurity from pg_class where oid='private.oauth_states'::regclass)",
-  "union all select 'assumption','oauth_state_rpcs_service_only',null, to_regprocedure('public.create_oauth_state(text,text,uuid,bigint,text,timestamptz)') is not null and not has_function_privilege('anon','public.create_oauth_state(text,text,uuid,bigint,text,timestamptz)','execute')",
+  `union all select 'assumption','oauth_state_rpcs_service_only',null,coalesce((select bool_and(case when to_regprocedure(v.signature) is null then false else not has_function_privilege('anon',v.signature,'execute') and not has_function_privilege('authenticated',v.signature,'execute') and has_function_privilege('service_role',v.signature,'execute') end) from (values ${SERVICE_ONLY_RPC_VALUES_SQL}) v(signature,category) where v.category='oauth-state'),false)`,
   "union all select 'assumption','garmin_oauth_tokens_service_only',null, not has_table_privilege('anon','public.garmin_oauth_tokens','select') and not has_table_privilege('authenticated','public.garmin_oauth_tokens','select')",
   "union all select 'assumption','runsignup_credentials_on_athletes',null, (select count(*)=3 from information_schema.columns where table_schema='public' and table_name='athletes' and column_name in ('runsignup_access_token','runsignup_refresh_token','runsignup_token_expires_at'))",
   "union all select 'assumption','profiles_credential_free',null, not exists(select 1 from information_schema.columns where table_schema='public' and table_name='profiles' and column_name in ('runsignup_access_token','runsignup_refresh_token','runsignup_token_expires_at'))",
@@ -716,6 +756,7 @@ async function fetchLiveInventory(
     cronTargets: [],
     triggerTargets: [],
     privilegedRpcs: [],
+    serviceOnlyRpcs: [],
   };
   for (const row of rows) {
     if (row.kind === "migration") inventory.migrations.push({ version: row.key });
@@ -728,6 +769,16 @@ async function fetchLiveInventory(
       inventory.privilegedRpcs.push({
         signature: row.key,
         exists: grants.exists === true,
+        anonExecute: grants.anon_execute as boolean,
+        authenticatedExecute: grants.authenticated_execute as boolean,
+        serviceRoleExecute: grants.service_role_execute as boolean,
+      });
+    }
+    else if (row.kind === "service_only_rpc") {
+      const grants = JSON.parse(String(row.value)) as Record<string, unknown>;
+      inventory.serviceOnlyRpcs.push({
+        signature: row.key,
+        category: grants.category as "delivery" | "oauth-state",
         anonExecute: grants.anon_execute as boolean,
         authenticatedExecute: grants.authenticated_execute as boolean,
         serviceRoleExecute: grants.service_role_execute as boolean,

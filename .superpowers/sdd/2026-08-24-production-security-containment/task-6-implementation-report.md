@@ -116,3 +116,12 @@ views, anonymous privileged RPCs, or a global JWT bypass.
 - Focused bounded suite: Node 24 native TypeScript stripping with the local Deno compatibility harness, `18 passed; 0 failed`.
 - Static check: `git diff --check`, exit 0.
 - Production mutations: none.
+
+## Final service-only RPC and README closure
+
+- Added exact live grant inventory for five service-only public RPCs: `claim_pending_deliveries(integer)`, `begin_delivery_submission(uuid,bigint)`, `finalize_delivery(uuid,bigint,text,text,text,timestamp with time zone)`, `create_oauth_state(text,text,uuid,bigint,text,timestamp with time zone)`, and `consume_oauth_state(text,text)`.
+- Every signature now requires `anon=false`, `authenticated=false`, and `service_role=true`; omitted signatures, omitted role fields, and every wrong role value fail closed. The delivery and OAuth-state schema assumptions independently apply the same three-role contract.
+- Removed the stale hardcoded README migration count. The README now points to the migrations directory as the source-derived inventory; the checkout contained 27 migration files at this review checkpoint.
+- Focused bounded suite: `19 passed; 0 failed`, including all 30 per-signature wrong/omitted role combinations and missing-signature coverage.
+- Static check: `git diff --check`, exit 0.
+- Production mutations: none.

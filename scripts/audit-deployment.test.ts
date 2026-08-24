@@ -2,6 +2,7 @@ import {
   REQUIRED_MIGRATIONS,
   REQUIRED_SCHEMA_ASSUMPTIONS,
   PRIVILEGED_RPC_SIGNATURES,
+  SERVICE_ONLY_RPC_SIGNATURES,
   FUNCTION_MANIFEST,
   auditDeployment,
   auditMigrationSource,
@@ -137,6 +138,12 @@ function inventory(mode: "deploy" | "pre" | "post" = "pre", includeUnknown = fal
       exists: true,
       anonExecute: false,
       authenticatedExecute: true,
+      serviceRoleExecute: true,
+    })),
+    serviceOnlyRpcs: SERVICE_ONLY_RPC_SIGNATURES.map((rpc) => ({
+      ...rpc,
+      anonExecute: false,
+      authenticatedExecute: false,
       serviceRoleExecute: true,
     })),
   };
@@ -287,6 +294,30 @@ Deno.test("all eight privileged RPC signatures and grants are mandatory", async 
   assertIncludes((await auditDeployment(incomplete, repository(), "pre", manifest())).errors, "signature/grant data is incomplete");
 });
 
+Deno.test("every delivery and OAuth-state RPC requires exact service-only role grants", async () => {
+  for (const expected of SERVICE_ONLY_RPC_SIGNATURES) {
+    for (const roleCase of [
+      { field: "anonExecute", value: true, error: "anon must not have EXECUTE" },
+      { field: "authenticatedExecute", value: true, error: "authenticated must not have EXECUTE" },
+      { field: "serviceRoleExecute", value: false, error: "service_role EXECUTE grant is missing" },
+    ] as const) {
+      const wrong = inventory("pre");
+      const rpc = wrong.serviceOnlyRpcs.find((entry) => entry.signature === expected.signature)!;
+      rpc[roleCase.field] = roleCase.value;
+      assertIncludes((await auditDeployment(wrong, repository(), "pre", manifest())).errors, expected.signature + ": " + roleCase.error);
+
+      const omitted = inventory("pre");
+      const omittedRpc = omitted.serviceOnlyRpcs.find((entry) => entry.signature === expected.signature)!;
+      delete (omittedRpc as unknown as Record<string, unknown>)[roleCase.field];
+      assertIncludes((await auditDeployment(omitted, repository(), "pre", manifest())).errors, expected.signature + ": service-only RPC role grant data is incomplete");
+    }
+  }
+
+  const missing = inventory("pre");
+  const missingSignature = missing.serviceOnlyRpcs.pop()!.signature;
+  assertIncludes((await auditDeployment(missing, repository(), "pre", manifest())).errors, "service-only RPC inventory missing " + missingSignature);
+});
+
 Deno.test("retirement entries require reviewed JWT and blocked restore metadata", async () => {
   const retirements = FUNCTION_MANIFEST.filter((entry) => entry.classification === "approved-retirement");
   assert(retirements.length === 10, "expected ten retirements");
@@ -325,4 +356,5 @@ Deno.test("README never presents archived utilities as active or runnable", asyn
   assert(!readme.includes("supabase/functions/run-ddl"), "README must not point at an active run-ddl path");
   assert(readme.includes("retired and non-runnable"), "README must identify archives as retired and non-runnable");
   assert(readme.includes("blocked pending a dedicated security review"), "README must block automatic restoration");
+  assert(!/migrations\/\s+#\s+\d+\s+PostgreSQL migrations/.test(readme), "README migration documentation must not hardcode a drifting count");
 });
