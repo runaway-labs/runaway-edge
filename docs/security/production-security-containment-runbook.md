@@ -70,7 +70,7 @@ Capture with a read-only database role:
 
 ```sql
 begin read only;
-select c.relname,md5(pg_get_viewdef(c.oid)) definition_md5,c.reloptions from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname in ('activity_summary','conversation_summaries','monthly_activity_stats','recent_journal_entries') order by c.relname;
+select c.relname,md5(pg_get_viewdef(c.oid, true)) definition_md5,c.reloptions from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname in ('activity_summary','conversation_summaries','monthly_activity_stats','recent_journal_entries') order by c.relname;
 select schemaname,tablename,policyname,cmd,roles,qual,with_check from pg_policies where schemaname in ('public','private') order by schemaname,tablename,policyname;
 select count(*) total,count(*) filter(where athlete_id is null) ownerless,count(*) filter(where client_operation_id is not null) with_operation_id from public.activities;
 select athlete_id,count(*) from public.activities group by athlete_id order by count(*) desc;
