@@ -8,25 +8,7 @@ import {
   userGuardErrorResponse,
   type UserEndpointDependencies,
 } from '../_shared/user-endpoint.ts'
-
-const VALID_IDENTITY_LABELS = [
-  'Morning Runner',
-  'Trail Explorer',
-  'Consistent Builder',
-  'Weekend Warrior',
-  'Comeback Runner',
-] as const
-
-type RunnerIdentity = typeof VALID_IDENTITY_LABELS[number]
-
-const DEFAULT_IDENTITY: RunnerIdentity = 'Consistent Builder'
-const ANTHROPIC_IDENTITY_FAILED = 'ANTHROPIC_IDENTITY_FAILED'
-const ANTHROPIC_GOAL_FRAMING_FAILED = 'ANTHROPIC_GOAL_FRAMING_FAILED'
-
-interface IdentityDependencies extends UserEndpointDependencies {
-  fetch: typeof fetch
-  getEnv: (name: string) => string | undefined
-}
+import { classifyRunnerIdentity, frameGoal, identitySummary } from './deterministic.ts'
 
 const MILESTONE_SEEDS = [
   { key: 'first_run', label: 'First Step', description: 'Completed your first run with Runaway' },
@@ -36,10 +18,6 @@ const MILESTONE_SEEDS = [
   { key: 'consistency_4weeks', label: 'Consistent Builder', description: 'Ran at least once a week for 4 consecutive weeks' },
   { key: 'comeback', label: 'Comeback Runner', description: 'Returned to running after a gap of 2+ weeks' },
 ]
-
-function isValidIdentityLabel(value: string): value is RunnerIdentity {
-  return VALID_IDENTITY_LABELS.includes(value as RunnerIdentity)
-}
 
 function computeActivityStats(activities: Array<{
   distance: number | null
@@ -57,6 +35,11 @@ function computeActivityStats(activities: Array<{
     if (!a.activity_date) return false
     const day = new Date(a.activity_date).getDay()
     return day === 0 || day === 6
+  }).length
+
+  const morningRuns = activities.filter((a) => {
+    if (!a.activity_date) return false
+    return new Date(a.activity_date).getHours() < 10
   }).length
 
   const totalElevation = activities.reduce((sum, a) => sum + (a.elevation_gain ?? 0), 0)
@@ -79,136 +62,13 @@ function computeActivityStats(activities: Array<{
     }
   }
 
-  return { totalRuns, totalDistanceKm, weekendRuns, avgElevation, hasComeback }
+  return { totalRuns, totalDistanceKm, weekendRuns, morningRuns, avgElevation, hasComeback }
 }
 
 const DEFAULT_IDENTITY_SUMMARY = 'You show up consistently and keep building your running practice.'
 
-async function callClaudeIdentity(
-  stats: ReturnType<typeof computeActivityStats>,
-  why_i_run: string,
-  core_values: string[],
-  anthropicApiKey: string,
-  fetchImpl: typeof fetch,
-): Promise<{ runner_identity: RunnerIdentity; identity_summary: string }> {
-  const prompt = `You are categorizing a runner's identity. Based on the data below, pick EXACTLY ONE identity label from this list:
-- Morning Runner (runs frequently, often early)
-- Trail Explorer (high average elevation gain, varied terrain)
-- Consistent Builder (steady weekly cadence, no long gaps)
-- Weekend Warrior (most runs cluster on Saturday/Sunday)
-- Comeback Runner (returned after a 2+ week gap recently)
-
-Runner data:
-- Total runs last 90 days: ${stats.totalRuns}
-- Total distance: ${stats.totalDistanceKm} km
-- Weekend runs: ${stats.weekendRuns} of ${stats.totalRuns}
-- Average elevation gain per run: ${stats.avgElevation}m
-- Has comeback pattern: ${stats.hasComeback}
-- Why they run: "${why_i_run}"
-- Core values: ${core_values.join(', ')}
-
-Default to "Consistent Builder" if data is insufficient.
-
-Respond with ONLY valid JSON, no markdown:
-{
-  "runner_identity": "<one of the five labels>",
-  "identity_summary": "<one sentence, second person, under 20 words, never mention pace/goals/PRs>"
-}`
-
-  // Identity classification falls back to the default identity on any failure.
-  // Saving the profile must succeed even if Anthropic is unreachable or rate-limited —
-  // the runner can re-classify later by editing the mindset.
-  try {
-    const response = await fetchImpl('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': anthropicApiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5',
-        max_tokens: 200,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    })
-
-    if (!response.ok) {
-      console.error(ANTHROPIC_IDENTITY_FAILED, {
-        operation: 'identity_classification',
-        status: response.status,
-      })
-      return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
-    }
-
-    const data = await response.json()
-    const rawText = data.content[0].text.trim()
-
-    let parsed: { runner_identity: string; identity_summary: string }
-    try {
-      parsed = JSON.parse(rawText)
-    } catch {
-      console.error('ANTHROPIC_IDENTITY_PARSE_FAILED', { operation: 'identity_classification' })
-      return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
-    }
-
-    const runner_identity = isValidIdentityLabel(parsed.runner_identity)
-      ? parsed.runner_identity
-      : DEFAULT_IDENTITY
-
-    return { runner_identity, identity_summary: parsed.identity_summary ?? DEFAULT_IDENTITY_SUMMARY }
-  } catch {
-    console.error('ANTHROPIC_IDENTITY_REQUEST_FAILED', { operation: 'identity_classification' })
-    return { runner_identity: DEFAULT_IDENTITY, identity_summary: DEFAULT_IDENTITY_SUMMARY }
-  }
-}
-
-async function callClaudeGoalFraming(
-  activeGoal: { id: number; title: string; goal_type: string },
-  runner_identity: RunnerIdentity,
-  anthropicApiKey: string,
-  fetchImpl: typeof fetch,
-): Promise<string> {
-  const prompt = `Write one sentence (under 20 words) framing this running goal in identity terms for a "${runner_identity}". Never mention numbers or pace. Second person.
-
-Goal: ${activeGoal.title} (type: ${activeGoal.goal_type})
-Runner identity: ${runner_identity}
-
-Respond with ONLY the sentence, no JSON, no quotes.`
-
-  const response = await fetchImpl('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': anthropicApiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5',
-      max_tokens: 80,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  })
-
-  if (!response.ok) {
-    console.error(ANTHROPIC_GOAL_FRAMING_FAILED, {
-      operation: 'goal_framing',
-      status: response.status,
-    })
-    throw new Error(ANTHROPIC_GOAL_FRAMING_FAILED)
-  }
-
-  const data = await response.json()
-  return data.content[0].text.trim()
-}
-
-export function createHandler(overrides: Partial<IdentityDependencies> = {}) {
-  const userDeps = resolveUserEndpointDependencies(overrides)
-  const deps: IdentityDependencies = {
-    ...userDeps,
-    fetch: overrides.fetch ?? globalThis.fetch,
-    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
-  }
+export function createHandler(overrides: Partial<UserEndpointDependencies> = {}) {
+  const deps = resolveUserEndpointDependencies(overrides)
 
   return async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -231,7 +91,6 @@ export function createHandler(overrides: Partial<IdentityDependencies> = {}) {
     console.log('Identity profile request', { athleteId })
 
     const supabaseAdmin = deps.getAdmin()
-    const anthropicApiKey = deps.getEnv('ANTHROPIC_API_KEY') ?? ''
 
     // Fetch activities from last 90 days
     const cutoff = new Date()
@@ -261,14 +120,14 @@ export function createHandler(overrides: Partial<IdentityDependencies> = {}) {
     const activityList = activities ?? []
     const stats = computeActivityStats(activityList)
 
-    // Call Claude for identity classification
-    const { runner_identity, identity_summary } = await callClaudeIdentity(
-      stats,
-      why_i_run,
-      core_values,
-      anthropicApiKey,
-      deps.fetch,
-    )
+    const runner_identity = classifyRunnerIdentity({
+      totalRuns: stats.totalRuns,
+      weekendRuns: stats.weekendRuns,
+      morningRuns: stats.morningRuns,
+      avgElevation: Number(stats.avgElevation),
+      hasComeback: stats.hasComeback,
+    })
+    const identity_summary = identitySummary(runner_identity)
 
     // Merge adlerian_profile into existing core_memory
     const existingCoreMemory = existingProfile?.core_memory ?? {}
@@ -328,26 +187,14 @@ export function createHandler(overrides: Partial<IdentityDependencies> = {}) {
     }
 
     if (activeGoal) {
-      // Goal-framing is best-effort — a Claude failure here must not abort
-      // the identity save. The identity write above has already succeeded.
-      try {
-        const goal_framing = await callClaudeGoalFraming(
-          activeGoal,
-          runner_identity,
-          anthropicApiKey,
-          deps.fetch,
-        )
+      const goal_framing = frameGoal(runner_identity, activeGoal.title)
+      const { error: goalUpdateError } = await supabaseAdmin
+        .from('running_goals')
+        .update({ goal_framing })
+        .eq('id', activeGoal.id)
 
-        const { error: goalUpdateError } = await supabaseAdmin
-          .from('running_goals')
-          .update({ goal_framing })
-          .eq('id', activeGoal.id)
-
-        if (goalUpdateError) {
-          console.error('IDENTITY_GOAL_UPDATE_FAILED', { operation: 'goal_update' })
-        }
-      } catch {
-        console.error('IDENTITY_GOAL_FRAMING_SKIPPED', { operation: 'goal_framing' })
+      if (goalUpdateError) {
+        console.error('IDENTITY_GOAL_UPDATE_FAILED', { operation: 'goal_update' })
       }
     }
 

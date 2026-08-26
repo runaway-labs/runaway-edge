@@ -2,6 +2,7 @@
 // Generate AI-powered training journal entries
 
 import { corsHeaders } from '../_shared/cors.ts'
+import { buildJournalNarrative } from './deterministic.ts'
 import {
   parseLegacyAthleteId,
   resolveUserEndpointDependencies,
@@ -9,18 +10,11 @@ import {
   type UserEndpointDependencies,
 } from '../_shared/user-endpoint.ts'
 
-interface JournalDependencies extends UserEndpointDependencies {
-  fetch: typeof fetch
-  getEnv: (name: string) => string | undefined
-}
+interface JournalDependencies extends UserEndpointDependencies {}
 
 export function createHandler(overrides: Partial<JournalDependencies> = {}) {
   const userDeps = resolveUserEndpointDependencies(overrides)
-  const deps: JournalDependencies = {
-    ...userDeps,
-    fetch: overrides.fetch ?? globalThis.fetch,
-    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
-  }
+  const deps: JournalDependencies = { ...userDeps }
 
   return async (req: Request) => {
   // Handle CORS preflight requests
@@ -164,44 +158,17 @@ Week of ${weekStart.toLocaleDateString('en-US', { month: 'long', day: 'numeric',
 Total: ${activities.length} activities, ${totalDistance.toFixed(1)}km, ${Math.round(totalTime / 60)}min, ${Math.round(totalElevation)}m elevation
 `
 
-    // Call Anthropic API to generate journal
-    const anthropicApiKey = deps.getEnv('ANTHROPIC_API_KEY') ?? ''
-    const anthropicResponse = await deps.fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': anthropicApiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1500,
-        system: `You are a running coach writing a training journal entry. Analyze the week's training and provide:
-1. A brief summary of the week's training
-2. Key highlights or achievements
-3. Areas for improvement
-4. Recommendations for next week
-
-Be encouraging but honest. Focus on patterns, consistency, and progression.`,
-        messages: [
-          {
-            role: 'user',
-            content: `Generate a training journal entry for this week:\n\n${weekSummary}\n\nActivities:\n${activitySummaries.join('\n')}`
-          }
-        ]
-      })
+    const longestDistanceKm = activities.reduce(
+      (longest: number, activity: any) => Math.max(longest, (activity.distance || 0) / 1000),
+      0,
+    )
+    const journalText = buildJournalNarrative({
+      activitiesCount: activities.length,
+      totalDistanceKm: totalDistance,
+      totalMinutes: Math.round(totalTime / 60),
+      totalElevationM: totalElevation,
+      longestDistanceKm,
     })
-
-    if (!anthropicResponse.ok) {
-      console.error('ANTHROPIC_JOURNAL_FAILED', {
-        operation: 'journal_generation',
-        status: anthropicResponse.status,
-      })
-      throw new Error('ANTHROPIC_JOURNAL_FAILED')
-    }
-
-    const anthropicData = await anthropicResponse.json()
-    const journalText = anthropicData.content[0].text
 
     // Store journal in database
     const journalEntry = {

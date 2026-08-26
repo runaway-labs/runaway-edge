@@ -5,8 +5,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
-
 interface Activity {
   id: number
   athlete_id: number
@@ -181,28 +179,9 @@ Deno.serve(async (req) => {
     let priorityRecommendations: string[] = []
 
     if (runningActivities.length >= 3) {
-      // Always calculate VO2max using pace-based formula (no AI needed)
       vo2maxEstimate = calculateVO2MaxFromPace(runningActivities)
-
-      // Try AI for enhanced recommendations if available
-      if (ANTHROPIC_API_KEY) {
-        try {
-          const aiAnalysis = await generateAIAnalysis(runningActivities, trainingLoad, athlete)
-          // Use AI recommendations but keep pace-based VO2max as fallback
-          if (aiAnalysis.vo2maxEstimate) {
-            vo2maxEstimate = aiAnalysis.vo2maxEstimate
-          }
-          priorityRecommendations = aiAnalysis.recommendations
-        } catch (aiError) {
-          console.error('AI analysis failed, using fallback:', aiError)
-          priorityRecommendations = generateFallbackRecommendations(trainingLoad)
-        }
-      } else {
-        priorityRecommendations = generateFallbackRecommendations(trainingLoad)
-      }
-    } else {
-      priorityRecommendations = generateFallbackRecommendations(trainingLoad)
     }
+    priorityRecommendations = generateFallbackRecommendations(trainingLoad)
 
     const response: QuickWinsResponse = {
       success: true,
@@ -682,114 +661,7 @@ function formatPaceFromMinPerKm(minPerKm: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-// Generate AI-powered VO2max estimate and recommendations
-async function generateAIAnalysis(
-  activities: Activity[],
-  trainingLoad: TrainingLoadAnalysis,
-  athlete: any
-): Promise<{ vo2maxEstimate: VO2MaxEstimate | null, recommendations: string[] }> {
-
-  // Calculate basic metrics for the prompt
-  const recentRuns = activities.slice(0, 20)
-  const avgPace = recentRuns.reduce((sum, a) => {
-    if (!a.average_speed || a.average_speed === 0) return sum
-    return sum + (1609.34 / a.average_speed) / 60
-  }, 0) / recentRuns.filter(a => a.average_speed > 0).length
-
-  const longestRun = Math.max(...activities.map(a => a.distance || 0)) / 1000
-  const fastestPace = Math.min(...activities.filter(a => a.average_speed > 0).map(a => (1609.34 / a.average_speed) / 60))
-
-  const prompt = `This runner's current training data:
-- Name: ${athlete.first_name}
-- ACWR: ${trainingLoad.acwr} (${trainingLoad.injury_risk_level} risk, ${trainingLoad.recovery_status})
-- Acute load 7d: ${trainingLoad.acute_load_7_days}, Chronic load 28d avg: ${trainingLoad.chronic_load_28_days}
-- Training trend: ${trainingLoad.training_trend}
-- Weekly volume last 7 days: ${trainingLoad.weekly_volume_km.toFixed(1)} km
-- 28-day avg weekly volume: ${(trainingLoad.total_volume_km / 4).toFixed(1)} km/week
-- Average pace (last 20 runs): ${avgPace.toFixed(2)} min/mile
-- Fastest recent pace: ${fastestPace.toFixed(2)} min/mile
-- Longest recent run: ${longestRun.toFixed(1)} km
-
-Generate 3 priority_recommendations. Rules:
-1. Each must reference at least one specific number from their data above
-2. Each must be actionable for THIS week specifically
-3. Do NOT include generic wellness advice (no sleep tips, no "eat protein", no foam rolling)
-4. Write like a coach who knows this athlete's numbers intimately
-
-Also estimate VO2max and race predictions using Jack Daniels VDOT method.
-
-Return ONLY valid JSON:
-{
-  "vo2_max": number,
-  "fitness_level": "elite"|"excellent"|"good"|"average"|"below_average",
-  "estimation_method": "pace_analysis",
-  "vvo2_max_pace": "M:SS",
-  "race_predictions": [
-    { "distance": "5K", "distance_km": 5.0, "predicted_time": "MM:SS", "predicted_time_seconds": number, "pace_per_km": "M:SS", "pace_per_mile": "M:SS", "confidence": "high" },
-    { "distance": "10K", "distance_km": 10.0, "predicted_time": "MM:SS", "predicted_time_seconds": number, "pace_per_km": "M:SS", "pace_per_mile": "M:SS", "confidence": "medium" },
-    { "distance": "Half Marathon", "distance_km": 21.0975, "predicted_time": "H:MM:SS", "predicted_time_seconds": number, "pace_per_km": "M:SS", "pace_per_mile": "M:SS", "confidence": "medium" },
-    { "distance": "Marathon", "distance_km": 42.195, "predicted_time": "H:MM:SS", "predicted_time_seconds": number, "pace_per_km": "M:SS", "pace_per_mile": "M:SS", "confidence": "low" }
-  ],
-  "recommendations": ["string referencing their data", "string referencing their data"],
-  "data_quality_score": number between 0 and 1,
-  "priority_recommendations": [
-    "recommendation 1 with specific number from their data",
-    "recommendation 2 with specific number from their data",
-    "recommendation 3 with specific number from their data"
-  ]
-}`
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY || '',
-      'anthropic-version': '2024-10-22'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
-      system: 'You are an expert running coach and exercise physiologist. Provide accurate VO2max estimates and race predictions based on training data. Use established formulas like the Jack Daniels VDOT system. Be conservative with predictions. Respond with ONLY valid JSON.',
-      messages: [{ role: 'user', content: prompt }]
-    })
-  })
-
-  if (!response.ok) {
-    throw new Error(`Anthropic API error: ${response.status}`)
-  }
-
-  const data = await response.json()
-  let jsonText = data.content[0].text
-
-  // Extract JSON if wrapped in code blocks
-  if (jsonText.includes('```json')) {
-    jsonText = jsonText.split('```json')[1].split('```')[0].trim()
-  } else if (jsonText.includes('```')) {
-    jsonText = jsonText.split('```')[1].split('```')[0].trim()
-  }
-
-  let analysis: Record<string, unknown>
-  try {
-    analysis = JSON.parse(jsonText)
-  } catch {
-    throw new Error('Failed to parse AI analysis response')
-  }
-
-  return {
-    vo2maxEstimate: {
-      vo2_max: analysis.vo2_max,
-      fitness_level: analysis.fitness_level,
-      estimation_method: analysis.estimation_method,
-      vvo2_max_pace: analysis.vvo2_max_pace,
-      race_predictions: analysis.race_predictions || [],
-      recommendations: analysis.recommendations || [],
-      data_quality_score: analysis.data_quality_score || 0.7
-    },
-    recommendations: analysis.priority_recommendations || analysis.recommendations || []
-  }
-}
-
-// Generate recommendations without AI
+// Generate recommendations from measured training metrics
 function generateFallbackRecommendations(trainingLoad: TrainingLoadAnalysis): string[] {
   const recommendations: string[] = []
 

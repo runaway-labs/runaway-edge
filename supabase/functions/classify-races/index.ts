@@ -1,4 +1,4 @@
-// Race Classification: AI-powered classification of race directory entries
+// Race Classification: deterministic classification of race directory entries
 // Distinguishes races from non-race events and extracts standardized race lengths
 
 import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
@@ -27,89 +27,24 @@ interface DirectoryRow {
   events: { event_id: number; name: string; distance: string; distance_units: string; start_time: string }[];
 }
 
-const SYSTEM_PROMPT = `You are a race classification engine. You receive batches of event entries from a race directory and must classify each one.
-
-For each entry, determine:
-1. **event_type**: "race" if this is an actual running/endurance race (5K, 10K, half marathon, marathon, ultra, trail run, etc.), or "event" if it is NOT a race (e.g., expo, volunteer signup, fun walk, festival, training program, virtual challenge with no specific race, packet pickup, fundraiser gala).
-2. **race_lengths**: An array of standardized race distances. Empty array for non-races.
-
-For race_lengths, use these standard labels when applicable:
-- "1 Mile" (distance: 1, unit: "mi")
-- "5K" (distance: 5, unit: "km")
-- "10K" (distance: 10, unit: "km")
-- "15K" (distance: 15, unit: "km")
-- "Half Marathon" (distance: 13.1, unit: "mi")
-- "Marathon" (distance: 26.2, unit: "mi")
-- "50K" (distance: 50, unit: "km")
-- "50 Mile" (distance: 50, unit: "mi")
-- "100K" (distance: 100, unit: "km")
-- "100 Mile" (distance: 100, unit: "mi")
-
-For non-standard distances, create a descriptive label (e.g., "8K", "30K", "200 Mile Relay").
-
-Use the entry name, description, and events array to make your determination. Most entries with distance-based events are races. Entries that are purely social, organizational, or non-competitive are events.
-
-Respond with ONLY a JSON array. No markdown fencing, no explanation. Each element must have: source_race_id (string), event_type ("race" or "event"), race_lengths (array of {distance, unit, label}).`;
-
-async function classifyBatch(entries: DirectoryRow[]): Promise<ClassificationResult[]> {
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) {
-    throw new Error("Missing ANTHROPIC_API_KEY environment variable");
-  }
-
-  const batchInput = entries.map((e) => ({
-    source_race_id: e.source_race_id,
-    name: e.name,
-    description: e.description ? e.description.slice(0, 200) : null,
-    events: e.events.map((ev) => ({
-      name: ev.name,
-      distance: ev.distance,
-      distance_units: ev.distance_units,
-    })),
-  }));
-
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: `Classify these ${entries.length} entries:\n\n${JSON.stringify(batchInput)}`,
-        },
-      ],
-    }),
+function classifyBatch(entries: DirectoryRow[]): ClassificationResult[] {
+  return entries.map((entry) => {
+    const race_lengths: RaceLength[] = [];
+    const seen = new Set<string>();
+    for (const event of entry.events ?? []) {
+      const distance = Number.parseFloat(String(event.distance));
+      const rawUnit = String(event.distance_units ?? "").toLowerCase();
+      const unit: "mi" | "km" = rawUnit.startsWith("k") ? "km" : "mi";
+      if (!Number.isFinite(distance) || distance <= 0) continue;
+      const key = distance + ":" + unit;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const label = unit === "km" ? distance + "K" : distance === 13.1 ? "Half Marathon" : distance === 26.2 ? "Marathon" : distance + " Mile";
+      race_lengths.push({ distance, unit, label });
+    }
+    const excluded = /expo|packet pickup|volunteer|festival|training program|gala/i.test(entry.name);
+    return { source_race_id: entry.source_race_id, event_type: race_lengths.length > 0 && !excluded ? "race" : "event", race_lengths };
   });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${errorBody}`);
-  }
-
-  const data = await response.json();
-  const textContent = data.content
-    .filter((block: { type: string }) => block.type === "text")
-    .map((block: { text: string }) => block.text)
-    .join("\n");
-
-  if (!textContent) {
-    throw new Error("Anthropic API returned empty content");
-  }
-
-  let parsed: ClassificationResult[]
-  try {
-    parsed = JSON.parse(textContent) as ClassificationResult[]
-  } catch {
-    throw new Error('Failed to parse AI classification response')
-  }
-  return parsed;
 }
 
 Deno.serve(async (req: Request) => {
@@ -174,10 +109,10 @@ Deno.serve(async (req: Request) => {
 
       totalProcessed += rows.length;
 
-      // Classify via Anthropic API
+      // Classify from structured event data
       let results: ClassificationResult[];
       try {
-        results = await classifyBatch(rows as DirectoryRow[]);
+        results = classifyBatch(rows as DirectoryRow[]);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`Classification error (batch ${batch}): ${msg}`);

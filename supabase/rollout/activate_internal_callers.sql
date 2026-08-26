@@ -56,7 +56,6 @@ begin
     select *
     from (values
       ('check-conditions-job', '*/30 * * * *', 'check-conditions', true, false),
-      ('process-deliveries-job', '* * * * *', 'process-deliveries', false, false),
       ('sync-race-directory-job', '0 2 * * *', 'sync-race-directory', false, false),
       ('daily-research-brief', '0 6 * * *', 'daily-research-brief', true, true),
       ('fetch-daily-articles', '0 6 * * *', 'fetch-daily-articles', true, true)
@@ -109,20 +108,20 @@ begin
   end if;
   if (select count(*) from cron.job
       where jobname in (
-        'check-conditions-job', 'process-deliveries-job', 'sync-race-directory-job',
+        'check-conditions-job', 'sync-race-directory-job',
         'daily-research-brief', 'fetch-daily-articles'
       )
         and command like '%X-Runaway-Internal-Secret%'
-        and command like '%private.require_internal_job_secret()%') <> 5
+        and command like '%private.require_internal_job_secret()%') <> 4
   then
     raise exception 'dedicated-secret cron caller cardinality check failed';
   end if;
   if (select count(*) from cron.job where active and jobname in (
       'check-conditions-job', 'daily-research-brief', 'fetch-daily-articles'
     )) <> 3
-    or (select count(*) from cron.job where not active and jobname in (
-      'process-deliveries-job', 'sync-race-directory-job'
-    )) <> 2
+    or (select count(*) from cron.job where not active and jobname =
+      'sync-race-directory-job'
+    ) <> 1
   then
     raise exception 'cron active-state preservation check failed';
   end if;

@@ -83,8 +83,7 @@ export const ROLLOUT_COHORTS: Record<RolloutCohort, string[]> = {
   ],
   internal: [
     "breakthrough-milestones", "check-conditions", "daily-research-brief",
-    "fetch-daily-articles", "notify-activity-insert", "process-deliveries",
-    "sync-race-directory",
+    "fetch-daily-articles", "notify-activity-insert", "sync-race-directory",
   ],
   oauth: ["garmin-auth", "garmin-callback", "oauth-callback", "strava-auth"],
 };
@@ -123,7 +122,6 @@ const BASELINE_VERIFY_JWT: Record<string, boolean> = {
   "micro-wins": false,
   "notify-activity-insert": false,
   "oauth-callback": false,
-  "process-deliveries": false,
   "regenerate-training-plan": false,
   "send-alert": false,
   "strava-auth": false,
@@ -201,7 +199,7 @@ export const FUNCTION_MANIFEST: ManifestEntry[] = [
   active("micro-wins", "user", true, "70ae6d2dd5f8d23a4df2308b0841f072c8751f467aeaa25dddeb58c4f1673b57"),
   active("notify-activity-insert", "internal", false, "20c470211d55568cbbd3407ae9d8729df3a16f6eab6dcb71a2a9091839949978"),
   active("oauth-callback", "provider", false, "ff6ba2cac0fb6130224e7397d7a1266b086684bdcd6379f553c28f0e0350f1cd"),
-  active("process-deliveries", "internal", false, "d1be0e375312d8a643077eb33ef18a2079537a94bb8842a78504354d75993877"),
+  retirement("process-deliveries", "9ad5fb77c94b6bcf8ea18a9778c435a083ab1baa7a985f088b09e9c113b264ce", false, "blocked-pending-security-review"),
   active("regenerate-training-plan", "user", true, "003e29f660bc9fbee9dd5bb6d9446778a102a19c653457168257abbaa80edd1b"),
   active("send-alert", "admin", true, "aeac3fe28e2ffa3837004b4d54b2a33fa1e21ddb759316036f7f71f6638eb9d0"),
   active("strava-auth", "user", true, "a0d9e7a6e02db94e23924d671c18ae23aed7fce11872ac0eea84347e48c0486b"),
@@ -269,7 +267,6 @@ const EXPECTED_CRON = [
   ["check-conditions-job", "check-conditions"],
   ["daily-research-brief", "daily-research-brief"],
   ["fetch-daily-articles", "fetch-daily-articles"],
-  ["process-deliveries-job", "process-deliveries"],
   ["sync-race-directory-job", "sync-race-directory"],
 ];
 const EXPECTED_TRIGGERS = [
@@ -361,13 +358,17 @@ function parseConfig(text: string): Map<string, FunctionConfig> {
 
 function relativeImports(source: string): string[] {
   const imports = new Set<string>();
+  const runtimeSource = source.replace(
+    /^\s*(?:import|export)\s+type\b[\s\S]*?\bfrom\s*["'][^"']+["']\s*;?/gm,
+    "",
+  );
   const patterns = [
     /(?:from\s*|import\s*\(\s*)["'](\.{1,2}\/[^"'?#]+)["']/g,
     /import\s*["'](\.{1,2}\/[^"'?#]+)["']/g,
   ];
   for (const pattern of patterns) {
     let match: RegExpExecArray | null;
-    while ((match = pattern.exec(source))) imports.add(match[1]);
+    while ((match = pattern.exec(runtimeSource))) imports.add(match[1]);
   }
   return sorted(imports);
 }
@@ -749,20 +750,34 @@ async function readTree(root: string, prefix = ""): Promise<Map<string, string>>
   return files;
 }
 
+export function resolveSupabaseProjectPath(path: string): string {
+  const normalized = normalizePath(path);
+  return normalized.startsWith("supabase/") ? normalized : normalizePath("supabase/" + normalized);
+}
+
+export function deploymentExtraFiles(
+  config: FunctionConfig,
+  files: Map<string, string>,
+): string[] {
+  if (config.importMap) return [resolveSupabaseProjectPath(config.importMap)];
+  const fallback = "supabase/functions/import_map.json";
+  return files.has(fallback) ? [fallback] : [];
+}
+
 async function readRepository(root: string): Promise<RepositorySnapshot> {
   const configText = await Deno.readTextFile(root + "/supabase/config.toml");
   const config = parseConfig(configText);
   const sourceDirectories = new Set<string>();
   for await (const entry of Deno.readDir(root + "/supabase/functions")) {
-    if (entry.isDirectory && !entry.name.startsWith("_")) sourceDirectories.add(entry.name);
+    if (entry.isDirectory && !entry.name.startsWith("_") && !entry.name.startsWith(".")) sourceDirectories.add(entry.name);
   }
   const allFiles = await readTree(root + "/supabase", "supabase");
   const bundleHashes = new Map<string, string>();
   const bundleErrors: string[] = [];
   for (const entry of FUNCTION_MANIFEST.filter((item) => item.classification === "expected-active")) {
     const functionConfig = config.get(entry.slug);
-    const entrypoint = normalizePath(functionConfig?.entrypoint ?? "supabase/functions/" + entry.slug + "/index.ts");
-    const extras = functionConfig?.importMap ? [normalizePath("supabase/" + functionConfig.importMap)] : [];
+    const entrypoint = resolveSupabaseProjectPath(functionConfig?.entrypoint ?? "functions/" + entry.slug + "/index.ts");
+    const extras = deploymentExtraFiles(functionConfig ?? {}, allFiles);
     const bundle = await buildBundleHash(allFiles, entrypoint, extras);
     bundleErrors.push(...bundle.errors.map((error) => entry.slug + ": " + error));
     if (bundle.hash) bundleHashes.set(entry.slug, bundle.hash);
@@ -830,15 +845,15 @@ const SERVICE_ONLY_RPC_VALUES_SQL = SERVICE_ONLY_RPC_SIGNATURES
   .map((rpc) => "('" + rpc.signature.replaceAll("'", "''") + "','" + rpc.category + "')")
   .join(",");
 
-const LIVE_INVENTORY_SQL = [
+export const LIVE_INVENTORY_SQL = [
   "select 'migration'::text as kind, version::text as key, null::text as value, true as passed from supabase_migrations.schema_migrations",
   "union all select 'column', table_schema || '.' || table_name, column_name, true from information_schema.columns where (table_schema, table_name) in (('public','profiles'),('public','athletes'),('public','activities'),('private','oauth_states'))",
   "union all select 'cron', coalesce(jobname, jobid::text), (regexp_match(command, '/functions/v1/([a-z0-9-]+)'))[1], true from cron.job where command ~ '/functions/v1/[a-z0-9-]+'",
   "union all select 'trigger', tg.tgname || ':' || n.nspname || '.' || c.relname, (regexp_match(pg_get_functiondef(p.oid), '/functions/v1/([a-z0-9-]+)'))[1], true from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace join pg_proc p on p.oid=tg.tgfoid where not tg.tgisinternal and pg_get_functiondef(p.oid) ~ '/functions/v1/[a-z0-9-]+'",
-  "union all select 'assumption','live_view_definitions_match',null, (select count(*)=4 from (values ('activity_summary','3f91ffc93cc5cd952cc9873de6c5dc63'),('conversation_summaries','2b46d7b0aafbacf2b8f044214d1f6ba3'),('monthly_activity_stats','ed5bab41993ca187a0a25c2098ebf9c2'),('recent_journal_entries','b9a0389d9cedcc19f11f70776d33ee23')) expected(view_name,definition_md5) where to_regclass('public.'||expected.view_name) is not null and md5(pg_get_viewdef(to_regclass('public.'||expected.view_name)))=expected.definition_md5)",
+  "union all select 'assumption','live_view_definitions_match',null, (select count(*)=4 from (values ('activity_summary','3f91ffc93cc5cd952cc9873de6c5dc63'),('conversation_summaries','2b46d7b0aafbacf2b8f044214d1f6ba3'),('monthly_activity_stats','ed5bab41993ca187a0a25c2098ebf9c2'),('recent_journal_entries','b9a0389d9cedcc19f11f70776d33ee23')) expected(view_name,definition_md5) where to_regclass('public.'||expected.view_name) is not null and md5(pg_get_viewdef(to_regclass('public.'||expected.view_name), true))=expected.definition_md5)",
   "union all select 'assumption','profiles_security_invoker_and_scoped',null, exists(select 1 from pg_class c where c.oid='public.profiles'::regclass and 'security_invoker=true'=any(coalesce(c.reloptions,array[]::text[]))) and not has_table_privilege('anon','public.profiles','select') and has_table_privilege('authenticated','public.profiles','select')",
   "union all select 'assumption','user_views_security_invoker_and_scoped',null, (select bool_and('security_invoker=true'=any(coalesce(c.reloptions,array[]::text[])) and not has_table_privilege('anon','public.'||c.relname,'select') and has_table_privilege('authenticated','public.'||c.relname,'select')) from pg_class c where c.oid in ('public.activity_summary'::regclass,'public.conversation_summaries'::regclass,'public.monthly_activity_stats'::regclass,'public.recent_journal_entries'::regclass))",
-  "union all select 'assumption','analytics_views_service_only',null, (select bool_and(not has_table_privilege('anon','public.'||c.relname,'select') and not has_table_privilege('authenticated','public.'||c.relname,'select') and has_table_privilege('service_role','public.'||c.relname,'select')) from pg_class c where c.oid in ('public.analytics_activity_funnel'::regclass,'public.analytics_activity_hours'::regclass,'public.analytics_audio_coaching'::regclass,'public.analytics_daily_summary'::regclass,'public.analytics_user_engagement'::regclass))",
+  "union all select 'assumption','analytics_views_service_only',null, coalesce((select count(*)=5 and bool_and(not has_table_privilege('anon','public.'||c.relname,'select') and not has_table_privilege('authenticated','public.'||c.relname,'select') and has_table_privilege('service_role','public.'||c.relname,'select')) from pg_class c where c.oid in (to_regclass('public.analytics_activity_funnel'),to_regclass('public.analytics_activity_hours'),to_regclass('public.analytics_audio_coaching'),to_regclass('public.analytics_daily_summary'),to_regclass('public.analytics_user_engagement'))),false)",
   "union all select 'assumption','weekly_training_plans_owner_scoped',null, not exists(select 1 from pg_policies where schemaname='public' and tablename='weekly_training_plans' and policyname='Authenticated read access') and exists(select 1 from pg_policies where schemaname='public' and tablename='weekly_training_plans' and policyname='Users can read own plans')",
   `union all select 'privileged_rpc',v.signature,json_build_object('exists',to_regprocedure(v.signature) is not null,'anon_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('anon',v.signature,'execute') end,'authenticated_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('authenticated',v.signature,'execute') end,'service_role_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('service_role',v.signature,'execute') end)::text,true from (values ${PRIVILEGED_RPC_VALUES_SQL}) v(signature)`,
   `union all select 'assumption','privileged_rpcs_anon_revoked',null,coalesce((select bool_and(to_regprocedure(v.signature) is not null and not has_function_privilege('anon',v.signature,'execute')) from (values ${PRIVILEGED_RPC_VALUES_SQL}) v(signature)),false)`,
@@ -846,9 +861,9 @@ const LIVE_INVENTORY_SQL = [
   "union all select 'assumption','internal_delivery_schema',null, (select count(*)=5 from information_schema.columns where table_schema='public' and table_name='alert_deliveries' and column_name in ('attempt_count','processing_started_at','claim_generation','lease_expires_at','idempotency_key'))",
   `union all select 'service_only_rpc',v.signature,json_build_object('category',v.category,'anon_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('anon',v.signature,'execute') end,'authenticated_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('authenticated',v.signature,'execute') end,'service_role_execute',case when to_regprocedure(v.signature) is null then null else has_function_privilege('service_role',v.signature,'execute') end)::text,true from (values ${SERVICE_ONLY_RPC_VALUES_SQL}) v(signature,category)`,
   `union all select 'assumption','internal_job_rpcs_service_only',null,coalesce((select bool_and(case when to_regprocedure(v.signature) is null then false else not has_function_privilege('anon',v.signature,'execute') and not has_function_privilege('authenticated',v.signature,'execute') and has_function_privilege('service_role',v.signature,'execute') end) from (values ${SERVICE_ONLY_RPC_VALUES_SQL}) v(signature,category) where v.category='delivery'),false)`,
-  "union all select 'assumption','internal_callers_inactive',null, not exists(select 1 from cron.job where active and jobname in ('daily-research-brief','fetch-daily-articles','check-conditions-job','process-deliveries-job','sync-race-directory-job')) and not exists(select 1 from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace where not tg.tgisinternal and n.nspname='public' and c.relname='activities' and tg.tgname in ('activity-insert-notification','on_activity_insert','runaway_activity_insert_internal'))",
-  "union all select 'assumption','internal_callers_use_dedicated_secret',null, to_regprocedure('private.require_internal_job_secret()') is not null and (select count(*)=5 from cron.job where jobname in ('daily-research-brief','fetch-daily-articles','check-conditions-job','process-deliveries-job','sync-race-directory-job') and command like '%X-Runaway-Internal-Secret%' and command not like '%Authorization%') and (select count(*)=3 from cron.job where active and jobname in ('daily-research-brief','fetch-daily-articles','check-conditions-job')) and (select count(*)=2 from cron.job where not active and jobname in ('process-deliveries-job','sync-race-directory-job')) and (select count(*)=1 from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace where not tg.tgisinternal and n.nspname='public' and c.relname='activities' and tg.tgname='runaway_activity_insert_internal')",
-  "union all select 'assumption','oauth_states_secure',null, to_regclass('private.oauth_states') is not null and (select relrowsecurity from pg_class where oid='private.oauth_states'::regclass)",
+  "union all select 'assumption','internal_callers_inactive',null, not exists(select 1 from cron.job where active and jobname in ('daily-research-brief','fetch-daily-articles','check-conditions-job','sync-race-directory-job')) and not exists(select 1 from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace where not tg.tgisinternal and n.nspname='public' and c.relname='activities' and tg.tgname in ('activity-insert-notification','on_activity_insert','runaway_activity_insert_internal'))",
+  "union all select 'assumption','internal_callers_use_dedicated_secret',null, to_regprocedure('private.require_internal_job_secret()') is not null and (select count(*)=4 from cron.job where jobname in ('daily-research-brief','fetch-daily-articles','check-conditions-job','sync-race-directory-job') and command like '%X-Runaway-Internal-Secret%' and command not like '%Authorization%') and (select count(*)=3 from cron.job where active and jobname in ('daily-research-brief','fetch-daily-articles','check-conditions-job')) and (select count(*)=1 from cron.job where not active and jobname='sync-race-directory-job') and (select count(*)=1 from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace where not tg.tgisinternal and n.nspname='public' and c.relname='activities' and tg.tgname='runaway_activity_insert_internal')",
+  "union all select 'assumption','oauth_states_secure',null, coalesce((select relrowsecurity from pg_class where oid=to_regclass('private.oauth_states')),false)",
   `union all select 'assumption','oauth_state_rpcs_service_only',null,coalesce((select bool_and(case when to_regprocedure(v.signature) is null then false else not has_function_privilege('anon',v.signature,'execute') and not has_function_privilege('authenticated',v.signature,'execute') and has_function_privilege('service_role',v.signature,'execute') end) from (values ${SERVICE_ONLY_RPC_VALUES_SQL}) v(signature,category) where v.category='oauth-state'),false)`,
   "union all select 'assumption','garmin_oauth_tokens_service_only',null, not has_table_privilege('anon','public.garmin_oauth_tokens','select') and not has_table_privilege('authenticated','public.garmin_oauth_tokens','select')",
   "union all select 'assumption','runsignup_credentials_on_athletes',null, (select count(*)=3 from information_schema.columns where table_schema='public' and table_name='athletes' and column_name in ('runsignup_access_token','runsignup_refresh_token','runsignup_token_expires_at'))",

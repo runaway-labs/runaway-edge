@@ -1,7 +1,6 @@
 import { createRequireInternal } from "./require-internal.ts";
 import { createNotifyActivityInsertHandler } from "../notify-activity-insert/handler.ts";
 import { createCheckConditionsHandler } from "../check-conditions/handler.ts";
-import { createProcessDeliveriesHandler } from "../process-deliveries/handler.ts";
 import { createBreakthroughMilestonesHandler } from "../breakthrough-milestones/handler.ts";
 import { createDailyResearchBriefHandler } from "../daily-research-brief/handler.ts";
 import { createFetchDailyArticlesHandler } from "../fetch-daily-articles/handler.ts";
@@ -22,7 +21,6 @@ function assertEquals<T>(actual: T, expected: T): void {
 const factories: Array<[string, InternalHandlerFactory]> = [
   ["notify-activity-insert", createNotifyActivityInsertHandler],
   ["check-conditions", createCheckConditionsHandler],
-  ["process-deliveries", createProcessDeliveriesHandler],
   ["breakthrough-milestones", createBreakthroughMilestonesHandler],
   ["daily-research-brief", createDailyResearchBriefHandler],
   ["fetch-daily-articles", createFetchDailyArticlesHandler],

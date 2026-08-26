@@ -1,0 +1,11 @@
+{
+  "slug": "process-deliveries",
+  "project_ref": "nkxvjcdxiyjbndjvfmqy",
+  "source": "reviewed production bundle",
+  "reviewed_at": "2026-08-25",
+  "bundle_sha256": "9ad5fb77c94b6bcf8ea18a9778c435a083ab1baa7a985f088b09e9c113b264ce",
+  "verify_jwt": false,
+  "restore_policy": "blocked-pending-security-review",
+  "secret_scan": "passed",
+  "retirement_status": "approved"
+}

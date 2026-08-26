@@ -75,9 +75,10 @@ Encouragement-first coaching surfaces backed by an identity model. See `agent/me
 |----------|-------------|
 | `notify-activity-insert` | Database trigger → APNs silent push on new activity |
 | `check-conditions` | Weather/AQI condition checks (runs every 30 min) |
-| `process-deliveries` | Alert delivery processing (runs every 1 min) |
 | `send-alert` | Dispatch alerts via Twilio/Resend |
 | `check-hooks` / `check-hooks2` | Webhook health checks |
+
+`process-deliveries` was retired on 2026-08-25. Existing alert delivery records are retained, but no scheduled delivery processor remains.
 
 ### Account & Training Plans
 | Function | Description |

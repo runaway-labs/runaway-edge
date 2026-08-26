@@ -8,8 +8,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
-
 interface Activity {
   id: number
   name: string
@@ -45,6 +43,47 @@ Deno.serve(async (req) => {
     const { data: athlete } = await supabase.from('athletes').select('id').eq('auth_user_id', user.id).single()
     if (!athlete) return new Response(JSON.stringify({ observations: {} }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 
+    if (req.method === 'POST') {
+      const body = await req.json() as { activity_id?: number; observation?: string }
+      const activityId = Number(body.activity_id)
+      const observation = String(body.observation ?? '').trim().slice(0, 500)
+      if (!Number.isInteger(activityId) || activityId <= 0 || observation.length < 12) {
+        return new Response(JSON.stringify({ success: false, error: 'Invalid activity observation' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      const { data: ownedActivity } = await supabase
+        .from('activities')
+        .select('id')
+        .eq('id', activityId)
+        .eq('athlete_id', athlete.id)
+        .maybeSingle()
+      if (!ownedActivity) {
+        return new Response(JSON.stringify({ success: false, error: 'Activity not found' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      const { error: saveError } = await supabase.from('activity_insights').upsert({
+        activity_id: activityId,
+        insight_type: 'twin_observation',
+        insight_data: { observation, source: 'apple_on_device' },
+      }, { onConflict: 'activity_id,insight_type' })
+      if (saveError) {
+        return new Response(JSON.stringify({ success: false, error: 'Unable to save observation' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     const thirtyDaysAgo = new Date()
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
 
@@ -77,73 +116,7 @@ Deno.serve(async (req) => {
 
     const needObservations = (activities as Activity[]).filter(a => !existingMap[a.id])
 
-    if (needObservations.length > 0) {
-      const allMiles = (activities as Activity[]).map(a => a.distance / 1609.34)
-      const avgMiles = allMiles.reduce((s, v) => s + v, 0) / allMiles.length
-      const paceSamples = (activities as Activity[]).filter(a => a.average_speed > 0).map(a => 1609.34 / a.average_speed / 60)
-      const avgPaceVal = paceSamples.length > 0 ? paceSamples.reduce((s, v) => s + v, 0) / paceSamples.length : null
-
-      const activityLines = needObservations.slice(0, 6).map(a => {
-        const mi = (a.distance / 1609.34).toFixed(2)
-        const pace = paceMinPerMile(a.average_speed)
-        const hr = a.average_heartrate ? `, HR ${Math.round(a.average_heartrate)}` : ''
-        const pr = (a.pr_count ?? 0) > 0 ? `, ${a.pr_count} PR` : ''
-        const rpe = a.perceived_exertion ? `, RPE ${a.perceived_exertion}` : ''
-        const type = a.activity_types?.name ?? 'Run'
-        const date = new Date(a.activity_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        return `[ID:${a.id}] ${date}: "${a.name}" — ${mi}mi @ ${pace}/mi${hr}${pr}${rpe} (${type})`
-      }).join('\n')
-
-      const prompt = `You are a digital running twin. Generate one observation per activity — specific, data-backed, 12 words max. Compare to other activities when it adds meaning. Never generic.
-
-Context (last 10 activities):
-- Avg distance: ${avgMiles.toFixed(1)}mi
-- Avg pace: ${avgPaceVal ? `${Math.floor(avgPaceVal)}:${Math.round((avgPaceVal % 1) * 60).toString().padStart(2, '0')}/mi` : 'N/A'}
-
-Activities:
-${activityLines}
-
-Respond ONLY with JSON mapping activity ID (as string) to observation:
-{"123": "Fastest 5-miler this month. Pace held through mile 5.", "124": "Easy effort dialed in — HR 138, textbook aerobic run."}`
-
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY || '', 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 600, messages: [{ role: 'user', content: prompt }] }),
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        let jsonText = data.content[0].text
-        if (jsonText.includes('```')) jsonText = jsonText.split('```')[1].replace('json', '').trim().split('```')[0].trim()
-
-        try {
-          const observations: Record<string, string> = JSON.parse(jsonText)
-
-          const upserts = Object.entries(observations).map(([id, obs]) => ({
-            activity_id: parseInt(id),
-            insight_type: 'twin_observation',
-            insight_data: { observation: obs },
-          }))
-
-          if (upserts.length > 0) {
-            await supabase
-              .from('activity_insights')
-              .upsert(upserts, { onConflict: 'activity_id,insight_type' })
-              .catch(() => {
-                // If upsert conflict key is wrong, do individual inserts
-                return supabase.from('activity_insights').insert(upserts)
-              })
-          }
-
-          for (const [id, obs] of Object.entries(observations)) {
-            existingMap[parseInt(id)] = obs
-          }
-        } catch (parseErr) {
-          console.error('Failed to parse observations JSON:', parseErr)
-        }
-      }
-    }
+    // New iOS 27 builds create observations on-device. Existing synced observations remain readable.
 
     return new Response(JSON.stringify({ observations: existingMap }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }

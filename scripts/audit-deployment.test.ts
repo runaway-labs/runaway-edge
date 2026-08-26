@@ -4,12 +4,15 @@ import {
   PRIVILEGED_RPC_SIGNATURES,
   SERVICE_ONLY_RPC_SIGNATURES,
   FUNCTION_MANIFEST,
+  LIVE_INVENTORY_SQL,
   ROLLOUT_COHORTS,
   auditDeployment,
   auditActivationSources,
   auditMigrationSource,
   auditWorkflowSource,
   buildBundleHash,
+  deploymentExtraFiles,
+  resolveSupabaseProjectPath,
   type DeploymentInventory,
   type ManifestEntry,
   type RepositorySnapshot,
@@ -136,7 +139,6 @@ function inventory(mode: "deploy" | "cohort-user" | "cohort-internal" | "cohort-
       { jobName: "check-conditions-job", target: "check-conditions" },
       { jobName: "daily-research-brief", target: "daily-research-brief" },
       { jobName: "fetch-daily-articles", target: "fetch-daily-articles" },
-      { jobName: "process-deliveries-job", target: "process-deliveries" },
       { jobName: "sync-race-directory-job", target: "sync-race-directory" },
     ],
     triggerTargets: mode === "cohort-user" || mode === "cohort-internal"
@@ -165,8 +167,8 @@ Deno.test("manifest explicitly classifies exactly 55 deployed slugs", () => {
     classification,
     FUNCTION_MANIFEST.filter((entry) => entry.classification === classification).length,
   ]));
-  assert(counts["expected-active"] === 42, JSON.stringify(counts));
-  assert(counts["approved-retirement"] === 13, JSON.stringify(counts));
+  assert(counts["expected-active"] === 41, JSON.stringify(counts));
+  assert(counts["approved-retirement"] === 14, JSON.stringify(counts));
   assert(counts["unknown-blocker"] === 0, JSON.stringify(counts));
 });
 
@@ -179,8 +181,7 @@ Deno.test("containment rollout cohorts are exact and carry explicit JWT flags", 
       ],
       internal: [
         "breakthrough-milestones", "check-conditions", "daily-research-brief",
-        "fetch-daily-articles", "notify-activity-insert", "process-deliveries",
-        "sync-race-directory",
+        "fetch-daily-articles", "notify-activity-insert", "sync-race-directory",
       ],
       oauth: ["garmin-auth", "garmin-callback", "oauth-callback", "strava-auth"],
     }),
@@ -277,6 +278,30 @@ Deno.test("bundle builder rejects a missing entrypoint", async () => {
   assert(!bundle.hash, "missing entrypoint must not produce a hash");
 });
 
+Deno.test("config entrypoints resolve from the Supabase project root", () => {
+  assert(
+    resolveSupabaseProjectPath("./functions/chat/index.ts") === "supabase/functions/chat/index.ts",
+    "relative entrypoint must resolve below supabase/",
+  );
+  assert(
+    resolveSupabaseProjectPath("supabase/functions/chat/index.ts") === "supabase/functions/chat/index.ts",
+    "repository-relative entrypoint must not be prefixed twice",
+  );
+});
+
+Deno.test("local bundle hashing includes the CLI fallback import map", () => {
+  const files = new Map([["supabase/functions/import_map.json", "{}"]]);
+  assert(
+    JSON.stringify(deploymentExtraFiles({}, files)) === JSON.stringify(["supabase/functions/import_map.json"]),
+    "fallback import map must be part of the deployable bundle",
+  );
+  assert(
+    JSON.stringify(deploymentExtraFiles({ importMap: "./functions/alpha/deno.json" }, files)) ===
+      JSON.stringify(["supabase/functions/alpha/deno.json"]),
+    "explicit function dependency config must override the fallback",
+  );
+});
+
 Deno.test("bundle builder rejects a missing relative dependency", async () => {
   const files = new Map([
     ["supabase/functions/alpha/index.ts", 'import "./missing.ts";\n'],
@@ -284,6 +309,18 @@ Deno.test("bundle builder rejects a missing relative dependency", async () => {
   const bundle = await buildBundleHash(files, "supabase/functions/alpha/index.ts");
   assertIncludes(bundle.errors, "missing relative dependency ./missing.ts");
   assert(!bundle.hash, "missing dependency must not produce a hash");
+});
+
+Deno.test("bundle hashing excludes erased type-only imports", async () => {
+  const bundle = await buildBundleHash(new Map([
+    ["supabase/functions/alpha/index.ts", 'import type { Payload } from "../_shared/types.ts";\nexport const value = 1;\n'],
+    ["supabase/functions/_shared/types.ts", "export interface Payload { id: string }\n"],
+  ]), "supabase/functions/alpha/index.ts");
+  assert(bundle.errors.length === 0, bundle.errors.join("\n"));
+  assert(
+    JSON.stringify(bundle.files) === JSON.stringify(["supabase/functions/alpha/index.ts"]),
+    "type-only source must not be included in the runtime bundle hash: " + JSON.stringify(bundle.files),
+  );
 });
 
 Deno.test("missing and mismatched complete live bundle hashes fail closed", async () => {
@@ -407,7 +444,7 @@ Deno.test("every delivery and OAuth-state RPC requires exact service-only role g
 
 Deno.test("retirement entries require reviewed JWT and blocked restore metadata", async () => {
   const retirements = FUNCTION_MANIFEST.filter((entry) => entry.classification === "approved-retirement");
-  assert(retirements.length === 13, "expected thirteen retirements");
+  assert(retirements.length === 14, "expected fourteen retirements");
   const jwtEnabled = retirements.filter((entry) => entry.verifyJwt).map((entry) => entry.slug).sort();
   assert(
     JSON.stringify(jwtEnabled) === JSON.stringify(["ultratracker", "upload-race-course"]),
@@ -474,6 +511,30 @@ Deno.test("production inventory strictly requires all captured live view definit
     result.errors.includes("schema assumption missing: live_view_definitions_match"),
     "missing live view definition evidence must block production preflight",
   );
+});
+
+Deno.test("production inventory treats pre-migration relations as missing instead of raising 42P01", () => {
+  assert(
+    LIVE_INVENTORY_SQL.includes("pg_get_viewdef(to_regclass('public.'||expected.view_name), true)"),
+    "approved view hashes must use pretty-mode definitions",
+  );
+  for (const relation of [
+    "public.analytics_activity_funnel",
+    "public.analytics_activity_hours",
+    "public.analytics_audio_coaching",
+    "public.analytics_daily_summary",
+    "public.analytics_user_engagement",
+    "private.oauth_states",
+  ]) {
+    assert(
+      LIVE_INVENTORY_SQL.includes("to_regclass('" + relation + "')"),
+      relation + " must use a null-safe regclass lookup",
+    );
+    assert(
+      !LIVE_INVENTORY_SQL.includes("'" + relation + "'::regclass"),
+      relation + " must not use a strict regclass cast",
+    );
+  }
 });
 
 Deno.test("caller assumptions are stage-specific and fail closed", async () => {

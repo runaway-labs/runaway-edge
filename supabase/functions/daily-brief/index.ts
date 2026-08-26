@@ -3,13 +3,13 @@
 // v2: Added Twin Taper Mode — special phase detection + voice for 21 days pre-race
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { buildDailyBrief } from './deterministic.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CACHE_HOURS = 6
@@ -384,118 +384,14 @@ Deno.serve(async (req) => {
       if (lines.length > 0) garminSection = `\nGarmin Device Data:\n${lines.join('\n')}`
     }
 
-    // Build system prompt
-    let systemPrompt = `You are the athlete's digital running twin — a deeply personalized AI that has studied their full training history. You are not a coach. You are a mirror. You reflect what the data shows about who they are becoming as an athlete.
-
-Your voice: direct, second person, declarative. Like a training partner who has been with them for every run and knows the numbers cold. No cheerleading. No judgment. When the data says something good, say it. When the data says something concerning, say it straight.
-
-ACWR is your primary signal for training state:
-- ACWR < 0.8: "You're fading. Your body has built capacity you're not using."
-- ACWR 0.8–1.0: "You're in maintenance. Solid base, not building."
-- ACWR 1.0–1.3: "You're in the flow. Load and capacity are matched."
-- ACWR 1.3–1.5: "You're flirting with the edge. Pull back or pay later."
-- ACWR > 1.5: "You're in the red. This is where injuries happen."
-
-Current ACWR state: ${acwrState.state} (${loadMetrics.acwr})
-Reference voice: "${acwrState.voice}"`
-
-    if (taperData.taperModeActive) {
-      systemPrompt += `
-
-==== TWIN TAPER MODE ACTIVE ====
-${taperData.systemContext}
-
-TAPER MODE VOICE RULES:
-- You are not a coach right now. You are an evidence keeper and witness.
-- The standard ACWR warning voice DOES NOT apply if athlete is tapering intentionally.
-- Volume dropping is correct and expected. Name this.
-- Doubt is coming (or already here). Get ahead of it with data.
-- Your job: make the fitness feel real. Show them what they've built.
-- The brand promise is most true right now: "Your data knows what your doubts don't."
-
-Cumulative data for context:
-- 12-week mileage: ${loadMetrics.cumulativeMi84d}mi
-- Peak training week: ${loadMetrics.peakWeeklyMi}mi
-- This week so far: ${loadMetrics.weeklyVolumeMi}mi
-- Race: ${raceName} — ${daysOut} days away
-${goalTime ? `- Goal time: ${goalTime}` : ''}
-====`
-    } else if (raceName) {
-      systemPrompt += `\n\nRace context: ${raceName} in ${daysOut} days. ${legacyPhaseGuidance}`
-    }
-
-    const planRow = planResult.data?.[0]
-    const planText = planRow ? `Week of ${planRow.week_start_date}, planned ${planRow.total_planned_km ?? '?'}km` : 'No training plan on file'
-
-    const userPrompt = `Generate a daily training brief for ${athlete.first_name ?? 'the athlete'}.
-
-Training Load (last 28 days):
-- ACWR: ${loadMetrics.acwr} — state: ${acwrState.state}
-- Acute load (7d): ${loadMetrics.acuteLoad}
-- Chronic load (28d avg): ${loadMetrics.chronicLoad}
-- This week's volume: ${loadMetrics.weeklyVolumeMi}mi
-- 28-day total: ${loadMetrics.totalVolumeMi}mi
-- 12-week cumulative: ${loadMetrics.cumulativeMi84d}mi
-- Peak week (12w): ${loadMetrics.peakWeeklyMi}mi
-- Training trend: ${loadMetrics.trainingTrend}
-${garminSection}
-Last 5 activities:
-${last5 || '  No recent activities'}
-
-${raceName ? `Upcoming race: ${raceName} — ${daysOut} days out${goalTime ? ` (goal: ${goalTime})` : ''}` : 'No upcoming races registered'}
-Training plan: ${planText}
-
-${taperData.taperModeActive ? `TAPER MODE ACTIVE — ${taperData.phaseName}
-Response format guidance:
-${taperData.responseGuidance}
-
-` : ''}Respond with ONLY valid JSON:
-{
-  "brief": "2-4 sentences. Must reference actual numbers. No generic advice.",
-  "today_action": "One specific concrete action for today. Max 15 words.",
-  "insight": "One data pattern worth noting. Max 20 words. Must cite a number.",
-  "tone": "positive | cautionary | neutral"
-}
-
-Rules:
-- Never use: 'stay hydrated', 'listen to your body', 'recovery is important', 'great job'
-- Always use their name in the brief
-- Tone must match context (taper mode = positive unless injury risk)`
-
-    const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY || '',
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 600,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
+    let result: DailyBriefResult = buildDailyBrief({
+      firstName: athlete.first_name ?? 'Runner',
+      metrics: loadMetrics,
+      acwrState: acwrState.state,
+      raceName: raceName || undefined,
+      daysOut: raceName ? daysOut : undefined,
+      taperPhase: taperData.taperModeActive ? taperData.phaseName : undefined,
     })
-
-    if (!anthropicResponse.ok) {
-      throw new Error(`Anthropic API error: ${anthropicResponse.status}`)
-    }
-
-    const anthropicData = await anthropicResponse.json()
-    let jsonText = anthropicData.content[0].text
-
-    if (jsonText.includes('```json')) {
-      jsonText = jsonText.split('```json')[1].split('```')[0].trim()
-    } else if (jsonText.includes('```')) {
-      jsonText = jsonText.split('```')[1].split('```')[0].trim()
-    }
-
-    let result: DailyBriefResult
-    try {
-      result = JSON.parse(jsonText)
-    } catch {
-      throw new Error('Failed to parse AI brief response')
-    }
 
     // Attach taper mode metadata
     if (taperData.taperModeActive) {

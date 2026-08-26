@@ -9,10 +9,7 @@ import {
   type UserEndpointDependencies,
 } from '../_shared/user-endpoint.ts'
 
-interface FeedbackDependencies extends UserEndpointDependencies {
-  fetch: typeof fetch
-  getEnv: (name: string) => string | undefined
-}
+interface FeedbackDependencies extends UserEndpointDependencies {}
 
 function deriveEffortLabel(distance: number | null, elapsedTime: number | null): string {
   if (!distance || !elapsedTime || distance === 0 || elapsedTime === 0) {
@@ -30,11 +27,7 @@ function deriveEffortLabel(distance: number | null, elapsedTime: number | null):
 
 export function createHandler(overrides: Partial<FeedbackDependencies> = {}) {
   const userDeps = resolveUserEndpointDependencies(overrides)
-  const deps: FeedbackDependencies = {
-    ...userDeps,
-    fetch: overrides.fetch ?? globalThis.fetch,
-    getEnv: overrides.getEnv ?? ((name) => Deno.env.get(name)),
-  }
+  const deps: FeedbackDependencies = { ...userDeps }
 
   return async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -110,59 +103,8 @@ export function createHandler(overrides: Partial<FeedbackDependencies> = {}) {
     const sportType = activity.sport_type ?? 'Run'
     const whyDisplay = whyIRun || '(not set)'
 
-    const prompt = `You are an Adlerian running coach. Write 2-3 sentences of post-workout encouragement.
-
-Rules:
-- Open by acknowledging they showed up ("You got out there", "Today you ran", "You laced up")
-- Name their identity naturally: "${runnerIdentity}"
-- Never compare to a goal, PR, or previous run
-- Never use "but", "however", or pivot language
-- 2-3 sentences maximum
-- Second person
-
-Athlete context:
-- Runner identity: ${runnerIdentity}
-- Why they run: ${whyDisplay}
-- Today's workout: ${distanceKm}km in ${durationMin}min (${effortLabel})
-- Sport: ${sportType}
-
-Respond with ONLY the feedback text. No JSON, no quotes, no preamble.`
-
-    let feedback = `You showed up today — that's what a ${runnerIdentity} does.`
-
-    try {
-      const anthropicApiKey = deps.getEnv('ANTHROPIC_API_KEY') ?? ''
-      const anthropicResponse = await deps.fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': anthropicApiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5',
-          max_tokens: 200,
-          messages: [
-            {
-              role: 'user',
-              content: prompt
-            }
-          ]
-        })
-      })
-
-      if (anthropicResponse.ok) {
-        const anthropicData = await anthropicResponse.json()
-        feedback = anthropicData.content[0].text.trim()
-      } else {
-        console.error('ANTHROPIC_FEEDBACK_FAILED', {
-          operation: 'feedback_generation',
-          status: anthropicResponse.status,
-        })
-      }
-    } catch {
-      console.error('ANTHROPIC_FEEDBACK_REQUEST_FAILED', { operation: 'feedback_generation' })
-    }
+    const purpose = whyIRun ? " You connected the work to why you run: " + whyIRun + "." : "";
+    const feedback = "You got out there for " + distanceKm + " km and " + durationMin + " minutes. That is what showing up as a " + runnerIdentity + " looks like." + purpose;
 
     // Insert insight row — one per call, duplicates are acceptable
     const { error: insertError } = await supabaseAdmin

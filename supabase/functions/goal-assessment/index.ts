@@ -4,8 +4,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
@@ -78,70 +76,13 @@ Deno.serve(async (req) => {
       ? Math.max(0, Math.round((new Date(goal.end_date).getTime() - Date.now()) / 86400000))
       : null
 
-    const prompt = `You are the Runaway training twin — direct, honest, second-person voice. No cheerleading.
-
-The athlete has set this goal:
-- Type: ${goal.goal_type}
-- Activity: ${goal.activity_type ?? 'running'}
-- Target value: ${goal.target_value} ${goal.goal_type === 'race_time' ? 'seconds (format as H:MM:SS)' : goal.goal_type === 'pace' ? 'seconds per mile' : 'miles'}
-- Current value: ${goal.current_value ?? 'unknown'}
-- Start date: ${goal.start_date ?? 'unknown'}
-- End date / deadline: ${goal.end_date ?? 'none set'}
-- Days remaining: ${daysLeft ?? 'unknown'}
-
-Their recent 8 weeks of training:
-- Total runs: ${totalRuns}
-- Weekly mileage avg: ${weeklyMileage.toFixed(1)} mi/week
-- Recent 4-week vs prior 4-week volume: ${trend > 0 ? '+' : ''}${(trend * 100).toFixed(0)}% ${trend > 0 ? 'building' : trend < -0.05 ? 'declining' : 'flat'}
-- Current average pace: ${avgPaceSecPerMi ? fmtPace(avgPaceSecPerMi) : 'unknown'}
-
-Return ONLY valid JSON (no markdown, no code blocks) in this exact format:
-{
-  "insights": [
-    { "title": "short sharp headline about where they stand", "detail": "1-2 sentences with specific numbers, honest assessment" },
-    { "title": "what the gap actually is", "detail": "1-2 sentences on the delta between current training and what the goal requires" },
-    { "title": "the single most important thing to do now", "detail": "1-2 sentences, specific, actionable, based on their data" }
-  ]
-}
-
-Rules:
-- 3 insights total, each with a title (max 8 words) and detail (1-2 sentences)
-- Second person voice. Reference actual numbers.
-- No generic advice. No cheerleading. Be honest about whether they'll make it.
-- Do not wrap in markdown or add any text outside the JSON.${goal?.goal_framing ? `\n\nThis athlete's goal framing: "${goal.goal_framing}".\nFrame assessment in identity terms, not deficit terms.` : ''}`
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5',
-        max_tokens: 500,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    })
-
-    const result = await response.json()
-    const rawText = result.content?.[0]?.text ?? '{}'
-
-    // Strip markdown code fences if model wrapped the JSON anyway
-    const cleaned = rawText
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```\s*$/, '')
-      .trim()
-
-    // Parse structured insights, fall back gracefully
-    let insights: { title: string; detail: string }[] = []
-    try {
-      const parsed = JSON.parse(cleaned)
-      insights = parsed.insights ?? []
-    } catch {
-      // If model still didn't return clean JSON, wrap the raw text as a single insight
-      insights = [{ title: 'Training assessment', detail: cleaned }]
-    }
+    const trendPercent = Math.round(trend * 100);
+    const direction = trendPercent > 5 ? "building" : trendPercent < -5 ? "declining" : "holding steady";
+    const insights = [
+      { title: "Your current training", detail: "You are averaging " + weeklyMileage.toFixed(1) + " miles per week across " + totalRuns + " runs; volume is " + direction + " at " + trendPercent + "%." },
+      { title: "The measurable gap", detail: "Your recent average pace is " + (avgPaceSecPerMi ? fmtPace(avgPaceSecPerMi) : "not yet established") + ". " + (daysLeft === null ? "No deadline is set." : daysLeft + " days remain.") },
+      { title: "Protect the next step", detail: trendPercent > 10 ? "Hold volume steady before adding intensity." : "Build one variable at a time and reassess after four more weeks." },
+    ];
 
     return new Response(
       JSON.stringify({ insights, weekly_mileage: weeklyMileage, trend, avg_pace_sec: avgPaceSecPerMi, days_left: daysLeft }),

@@ -3,14 +3,14 @@
 // Strategy (waterfall — stops at first hit):
 //   1. Check race_courses table for cached data
 //   2. Call RunSignUp /race/{race_id} for gpx_file_url / course_map_url
-//   3. Fetch race website HTML + ask Claude to find the GPX download URL
+//   3. Scan the official race website HTML for a GPX download URL
 //   4. Parse GPX → encoded polyline + elevation data + tactical insights
 //   5. Store in race_courses and return
 
 import { getSupabaseAdmin } from "../_shared/supabase-client.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { deriveTacticalInsights, findGpxUrlInHtml } from "./deterministic.ts";
 
-const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 const RUNSIGNUP_API_KEY = Deno.env.get("RUNSIGNUP_API_KEY");
 const RUNSIGNUP_API_SECRET = Deno.env.get("RUNSIGNUP_API_SECRET");
 
@@ -124,129 +124,6 @@ function buildElevationData(
   return result;
 }
 
-// Ask Claude to derive tactical crux points from elevation data.
-async function deriveTacticalInsights(
-  raceName: string,
-  elevationData: { distance: number; elevation: number; grade: number }[],
-): Promise<{ mile: number; description: string }[]> {
-  if (!ANTHROPIC_API_KEY) return [];
-
-  const prompt = `You are an elite running coach analyzing a race course. Here is the elevation profile for "${raceName}" sampled every quarter mile.
-
-Data (distance_miles, elevation_meters, grade_%):
-${elevationData.map((p) => `${p.distance}mi: ${p.elevation}m, grade ${p.grade}%`).join("\n")}
-
-Identify 3-5 tactical crux points — the segments that will most likely determine race outcome. For each, specify the mile marker and a 1-2 sentence tactical recommendation. Return ONLY a JSON array like:
-[{"mile": 6.2, "description": "The steepest sustained climb begins here. Shorten stride, maintain effort not pace — runners who blow up here never recover."}]`;
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  if (!res.ok) return [];
-  const data = await res.json();
-  const text = data.content?.[0]?.text ?? "";
-
-  try {
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (jsonMatch) return JSON.parse(jsonMatch[0]);
-  } catch {
-    // ignore parse failures
-  }
-  return [];
-}
-
-// Ask Claude to find the GPX download URL buried in a race website's HTML.
-async function findGpxInHtml(html: string, raceName: string): Promise<string | null> {
-  if (!ANTHROPIC_API_KEY) return null;
-
-  // Trim to 30k chars to stay within context limits
-  const truncated = html.length > 30000 ? html.slice(0, 30000) + "..." : html;
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 256,
-      messages: [
-        {
-          role: "user",
-          content: `This is HTML from the official ${raceName} website. Find the URL of any GPX route file or downloadable course map. Return ONLY the URL string, nothing else. If none exists, return the word null.\n\n${truncated}`,
-        },
-      ],
-    }),
-  });
-
-  if (!res.ok) return null;
-  const data = await res.json();
-  const text = (data.content?.[0]?.text ?? "").trim();
-  if (text === "null" || !text.startsWith("http")) return null;
-  return text;
-}
-
-// Ask Claude to guess the official race website URL, then scrape it.
-async function findGpxViaClaudeSearch(raceName: string): Promise<string | null> {
-  if (!ANTHROPIC_API_KEY) return null;
-
-  // Step 1: Ask Claude for the likely official website URL
-  const siteRes = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 128,
-      messages: [
-        {
-          role: "user",
-          content: `What is the official website URL for the "${raceName}" running race? Return ONLY the URL, nothing else. If unknown, return null.`,
-        },
-      ],
-    }),
-  });
-
-  if (!siteRes.ok) return null;
-  const siteData = await siteRes.json();
-  const siteUrl = (siteData.content?.[0]?.text ?? "").trim();
-  console.log("Claude guessed official website:", siteUrl);
-
-  if (siteUrl === "null" || !siteUrl.startsWith("http")) return null;
-
-  // Step 2: Fetch and scrape that website
-  try {
-    const webRes = await fetch(siteUrl, {
-      headers: { "User-Agent": "RunawayApp/1.0 (course-recon)" },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!webRes.ok) return null;
-    const html = await webRes.text();
-    console.log("Official site HTML length:", html.length);
-    return await findGpxInHtml(html, raceName);
-  } catch (e) {
-    console.log("Official site fetch failed:", e);
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // RunSignUp API
 // ---------------------------------------------------------------------------
 
@@ -345,7 +222,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // -------------------------------------------------------------------
-    // Tier 2: Scrape race website + ask Claude to find GPX link
+    // Tier 2: Scan the official race website for a GPX link
     // -------------------------------------------------------------------
     if (!gpxUrl && raceWebsiteUrl) {
       console.log("Scraping race website for GPX link...");
@@ -358,21 +235,12 @@ Deno.serve(async (req: Request) => {
         if (webRes.ok) {
           const html = await webRes.text();
           console.log("HTML length:", html.length);
-          gpxUrl = await findGpxInHtml(html, raceName);
-          console.log("GPX URL from Claude scrape:", gpxUrl);
+          gpxUrl = findGpxUrlInHtml(html, raceWebsiteUrl);
+          console.log("GPX URL from website scrape:", gpxUrl);
         }
       } catch (e) {
         console.log("Website fetch failed:", e);
       }
-    }
-
-    // -------------------------------------------------------------------
-    // Tier 3: Ask Claude for the official website, then scrape it
-    // -------------------------------------------------------------------
-    if (!gpxUrl) {
-      console.log("Trying Claude-guided website search for:", raceName);
-      gpxUrl = await findGpxViaClaudeSearch(raceName);
-      console.log("GPX URL from Claude search:", gpxUrl);
     }
 
     // -------------------------------------------------------------------
@@ -402,7 +270,7 @@ Deno.serve(async (req: Request) => {
 
     const polyline = encodePolyline(coords);
     const elevationData = buildElevationData(coords, elevations);
-    const tacticalInsights = await deriveTacticalInsights(raceName, elevationData);
+    const tacticalInsights = deriveTacticalInsights(elevationData);
 
     // -------------------------------------------------------------------
     // Store in race_courses

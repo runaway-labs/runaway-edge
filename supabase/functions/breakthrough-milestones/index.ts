@@ -37,7 +37,7 @@ interface NoBreakthrough {
   is_breakthrough: false;
 }
 
-type ClaudeResult = BreakthroughDetected | NoBreakthrough;
+type BreakthroughResult = BreakthroughDetected | NoBreakthrough;
 
 const METERS_PER_MILE = 1609.34;
 
@@ -206,78 +206,15 @@ function formatHistoryLines(history: Activity[]): string {
     .join("\n");
 }
 
-function buildPrompt(current: Activity, history: Activity[], signals: Signals): string {
-  const mi = (current.distance / METERS_PER_MILE).toFixed(2);
-  const pace = formatPace(paceSecPerMile(current.average_speed));
-  const type = current.activity_types?.name ?? "Run";
-
-  return `You are the Runaway coach. You've watched this athlete's entire running history. Decide if this run is a genuine breakthrough — a moment where something shifted. Not every run qualifies. Be selective. When you find one, name it and say something true about it in the coach's voice: direct, specific, no fluff, believes in them more than they believe in themselves.
-
-TODAY'S RUN:
-Name: "${current.name}" (${type})
-Distance: ${mi} miles | Pace: ${pace}
-Moving: ${Math.round(current.moving_time / 60)} min | Elapsed: ${Math.round(current.elapsed_time / 60)} min
-HR: ${current.average_heartrate ?? "N/A"} | Suffer: ${current.suffer_score ?? "N/A"} | PRs: ${current.pr_count ?? 0}
-Date: ${current.activity_date}
-
-PRE-COMPUTED SIGNALS (verified against full history — trust these):
-- longest_ever: ${signals.isLongestEver} (prev max: ${signals.maxPrevMiles}mi)
-- fastest_ever (3+ mi): ${signals.isFastestEver} (prev fastest: ${signals.prevFastestPace})
-- comeback (14+ day gap): ${signals.isComeback} (gap: ${signals.dayGap} days, finish ratio: ${signals.finishRatio})
-- no_stops (elapsed−moving < 60s): ${signals.isNoStops} (diff: ${signals.timeDiff}s, prev similar avg: ${signals.avgPrevTimeDiff}s)
-- distance_threshold crossed: ${signals.crossedThreshold ?? "none"}
-- strong_finish (top 25% suffer + PR): ${signals.isStrongFinish}
-
-HISTORY (oldest → newest, last 50 runs):
-${formatHistoryLines(history)}
-
-RULES:
-- Pick at most ONE type. Multiple true signals? Pick the most significant.
-- Only declare a breakthrough if the signal is true AND it feels like a real shift.
-- coach_message: under 3 sentences, specific to the numbers, no generic praise.
-- If nothing genuinely qualifies, return { "is_breakthrough": false }.
-
-Respond ONLY with JSON — no explanation, no markdown:
-{ "is_breakthrough": true, "type": "longest_ever", "title": "Furthest You've Ever Gone", "coach_message": "..." }
-OR
-{ "is_breakthrough": false }`;
-}
-
-async function callClaude(
-  current: Activity,
-  history: Activity[],
-  signals: Signals,
-): Promise<ClaudeResult> {
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5",
-      max_tokens: 400,
-      messages: [{ role: "user", content: buildPrompt(current, history, signals) }],
-    }),
-  });
-
-  if (!res.ok) throw new Error(`Claude API error: ${res.status}`);
-
-  const data = await res.json();
-  let text = (data.content[0].text as string).trim();
-  if (text.includes("```")) {
-    text = text.split("```")[1].replace("json", "").trim().split("```")[0].trim();
-  }
-
-  try {
-    return JSON.parse(text) as ClaudeResult;
-  } catch {
-    return { is_breakthrough: false };
-  }
+function detectBreakthrough(current: Activity, signals: Signals): BreakthroughResult {
+  const miles = (current.distance / METERS_PER_MILE).toFixed(2);
+  if (signals.isLongestEver) return { is_breakthrough: true, type: "longest_ever", title: "Furthest You Have Gone", coach_message: miles + " miles moved your distance ceiling beyond " + signals.maxPrevMiles + "." };
+  if (signals.isFastestEver) return { is_breakthrough: true, type: "fastest_ever", title: "A New Pace Standard", coach_message: formatPace(paceSecPerMile(current.average_speed)) + " is your fastest recorded pace over at least three miles." };
+  if (signals.crossedThreshold) return { is_breakthrough: true, type: "distance_threshold", title: "New Distance Territory", coach_message: "You crossed " + signals.crossedThreshold + " miles for the first time." };
+  if (signals.isComeback) return { is_breakthrough: true, type: "comeback", title: "The Return", coach_message: "You returned after " + signals.dayGap + " days away and completed the session." };
+  if (signals.isNoStops) return { is_breakthrough: true, type: "no_stops", title: "Continuous Start to Finish", coach_message: "Only " + signals.timeDiff + " seconds separated elapsed and moving time." };
+  if (signals.isStrongFinish) return { is_breakthrough: true, type: "strong_finish", title: "Pressure Produced Progress", coach_message: "A high-effort run produced " + current.pr_count + " personal record(s)." };
+  return { is_breakthrough: false };
 }
 
 async function saveBreakthrough(
@@ -350,7 +287,7 @@ export const handler = createBreakthroughMilestonesHandler(async (req) => {
 
     const history = await fetchRunHistory(supabase, athlete_id, activity_id);
     const signals = computeSignals(activity, history);
-    const result = await callClaude(activity, history, signals);
+    const result = detectBreakthrough(activity, signals);
 
     if (!result.is_breakthrough) {
       return jsonResponse({ processed: true, breakthrough: false });

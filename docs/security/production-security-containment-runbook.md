@@ -26,7 +26,7 @@ Stop on any mismatch, incomplete inventory, smoke failure, active Garmin initiat
 | Cohort | Functions | JWT |
 | --- | --- | --- |
 | User | `backfill-splits check-milestones feedback-workout identity-profile journal sync-beta training-plan user-races` | enabled |
-| Internal | `breakthrough-milestones check-conditions daily-research-brief fetch-daily-articles notify-activity-insert process-deliveries sync-race-directory` | disabled; dedicated secret required |
+| Internal | `breakthrough-milestones check-conditions daily-research-brief fetch-daily-articles notify-activity-insert sync-race-directory` | disabled; dedicated secret required |
 | OAuth initiators | `garmin-auth strava-auth` | enabled |
 | OAuth callbacks | `garmin-callback oauth-callback` | disabled |
 
@@ -135,10 +135,10 @@ Generate one high-entropy value. Put the same value in Edge secrets and Vault wi
 ```sh
 supabase secrets set --project-ref "$PROJECT_REF" --env-file "$EVIDENCE_DIR/internal-edge-secret.env"
 psql "$DB_URL" -v ON_ERROR_STOP=1 -X -f "$EVIDENCE_DIR/install-internal-vault-secret.sql"
-for slug in breakthrough-milestones check-conditions daily-research-brief fetch-daily-articles notify-activity-insert process-deliveries sync-race-directory; do supabase functions deploy "$slug" --project-ref "$PROJECT_REF" || exit 1; done
+for slug in breakthrough-milestones check-conditions daily-research-brief fetch-daily-articles notify-activity-insert sync-race-directory; do supabase functions deploy "$slug" --project-ref "$PROJECT_REF" || exit 1; done
 ```
 
-Vault SQL must create/update exactly `internal_job_secret` and verify `supabase_url` is approved HTTPS. Run `--mode cohort-internal`; callers remain inactive. Smoke all seven endpoints with the secret and require `401/403` without it or with only service-role bearer.
+Vault SQL must create/update exactly `internal_job_secret` and verify `supabase_url` is approved HTTPS. Run `--mode cohort-internal`; callers remain inactive. Smoke all six endpoints with the secret and require `401/403` without it or with only service-role bearer.
 
 ## Phase 6: final caller activation
 
@@ -148,7 +148,7 @@ Only after all internal endpoint smokes pass:
 PGOPTIONS="-c task8.endpoints_verified=true -c task8.approved_project_url=$SUPABASE_URL" psql "$DB_URL" -v ON_ERROR_STOP=1 -X -f supabase/rollout/activate_internal_callers.sql
 ```
 
-Require exactly one `runaway_activity_insert_internal`, no legacy trigger, five secret-only cron commands, three originally active jobs active, and `process-deliveries-job` plus `sync-race-directory-job` inactive with schedules unchanged. Smoke one insert/one notification, invoke active jobs once, and prove inactive jobs did not run.
+Require exactly one `runaway_activity_insert_internal`, no legacy trigger, four secret-only cron commands, three originally active jobs active, and `sync-race-directory-job` inactive with its schedule unchanged. `process-deliveries-job` and its Edge Function are permanently retired. Smoke one insert/one notification, invoke active jobs once, and prove the inactive job did not run.
 
 ## Phase 7: OAuth cohort while Garmin stays blocked
 

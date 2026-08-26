@@ -16,7 +16,7 @@ begin
     select jobid
     from cron.job
     where jobname in (
-      'check-conditions-job', 'process-deliveries-job', 'sync-race-directory-job',
+      'check-conditions-job', 'sync-race-directory-job',
       'daily-research-brief', 'fetch-daily-articles'
     )
   loop
